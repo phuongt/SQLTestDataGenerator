@@ -1,0 +1,108 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+You are an expert in C# Windows Forms development and MSTest unit testing and SQL development
+LUÔN ĐẢM BẢO SỬA TEST CASE CẦN HỎI TRƯỚC.
+LUÔN ĐẢM BẢO CODE KHÔNG ĐƯỢC DỰ VÀO DỰ LIỆU CỤ THỂ CỦA DB HAY SQL QUERY VÌ NGƯỜI DÙNG SẼ THAY ĐỔI KHI SỬ DỤNG TOOL NÀY.
+Windows Forms Tool for SQL-Based Data Generation
+
+    Project Purpose
+    - Build a Windows Forms application to generate mock/test data into a database based on user-provided SQL commands.
+    - Support developers and QA in automating data setup for testing environments.
+
+    Application Behavior
+    - Provide a user interface to:
+        - Enter SQL insert templates or select statements.
+        - Specify generation parameters (e.g., row count, value rules).
+        - Preview generated SQL.
+        - Execute SQL on a configured database.
+        - Export SQL to file as an alternative to direct execution.
+    - Display detailed logs for all actions.
+
+    Logging
+    - Implement centralized logging using `ILogger` or a custom `LoggerService`.
+    - Log every function’s entry/exit including:
+        - Method name
+        - Input parameters
+        - Output or return values
+        - Errors and exceptions (with stack traces)
+    - Store logs in:
+        - Text file (e.g., `app.log`)
+        - Optional real-time output to a `TextBox` or UI panel
+    - Use structured logging format: timestamp, level, context, message
+    - Add log level filtering (e.g., Info, Warning, Error)
+
+    API Key Management
+    - Store API key securely in `appsettings.json` or encrypted user secrets file.
+    - Access API key using `ConfigurationManager` or dependency injection.
+    - Do not hardcode sensitive values.
+    - Validate key format and provide meaningful error if missing or invalid.
+    - Use `SecureString` or equivalent protection in-memory when feasible.
+
+    UI Design
+    - Use structured layout with clear labeling:
+        - SQL input
+        - Parameter form
+        - Control buttons: Generate, Preview, Execute, Export
+        - Execution log display
+    - Enable/disable controls based on app state (e.g., disable Execute if SQL invalid)
+
+    Code Guidelines
+    - Use C# 10 or later.
+    - Structure code for testability and separation of concerns:
+        - `SqlTemplateParser`, `DataGenerator`, `DbExecutor`, `LoggerService`
+    - Apply defensive programming: null checks, error wrapping
+    - Use parameterized queries to avoid injection
+    - Modular design: logic should be reusable and testable outside the UI
+
+    File and Class Structure
+    - Forms: `MainForm.cs`, `LogViewForm.cs`
+    - Services: `SqlGenerationService`, `SqlExecutionService`, `LoggerService`
+    - Models: `SqlTemplate`, `GenerationSettings`, `ExecutionResult`
+    - Config: `AppSettings.cs` (for API key and DB config)
+
+    MSTest Guidelines
+    - Use MSTest for testing:
+        - SQL generation logic
+        - Placeholder and parameter replacement
+        - Logging function input/output capture
+        - Database execution using mock/stub or in-memory SQLite
+    - Project structure: `DataGenApp/`, `DataGenApp.Tests/`
+    - Use `[TestMethod]` with descriptive names
+    - Mock external dependencies like DB and logger
+    - Assert input/output integrity
+
+    Naming Conventions
+    - PascalCase: classes, methods, public props
+    - camelCase: local vars, private fields
+    - Prefix bools with `is`, `has`, `should` (e.g., `isValidInput`)
+    - XML summary comments for all public methods
+
+    Dependencies
+    - .NET 6 or later
+    - MSTest
+    - Dapper or ADO.NET
+    - Serilog or custom LoggerService
+    - System.Configuration or Microsoft.Extensions.Configuration for config
+
+    Output Expectations
+    - Provide full, working examples.
+    - Include all imports.
+    - No placeholders or TODOs.
+    - Include unit tests for all business logic.
+
+    Style Rules
+    - Use early returns for clarity.
+    - Avoid deeply nested logic.
+    - Write explanatory comments for non-obvious logic.
+    - Group methods by purpose using `#region`.
+
+    Security
+    - Do not log sensitive data unless explicitly marked as safe.
+    - Use `try-catch` with secure error reporting.
+    - Encrypt or hash secrets when storing or logging where applicable.
+
+Build the app with reliability, traceability, and testability as core priorities.
+
