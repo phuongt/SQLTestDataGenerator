@@ -289,10 +289,10 @@ public class EngineService
                     throw new InvalidOperationException($"Lỗi khi thực thi query gốc: {queryEx.Message}", queryEx);
                 }
 
-                // COMMIT to save data permanently
-                transaction.Commit();
-                Console.WriteLine($"[EngineService] Transaction committed successfully");
-                _logger.Information("Transaction committed successfully - {RecordCount} records added to database permanently", result.GeneratedRecords);
+                // ROLLBACK to undo data changes after displaying results
+                transaction.Rollback();
+                Console.WriteLine($"[EngineService] Transaction rolled back successfully - data was temporary for preview only");
+                _logger.Information("Transaction rolled back successfully - {RecordCount} records were generated temporarily for preview only", result.GeneratedRecords);
             }
             catch
             {

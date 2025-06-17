@@ -756,25 +756,26 @@ public partial class MainForm : Form
             {
                 dataGridView.DataSource = finalResult.ResultData;
                 
-                lblStatus.Text = $"✅ Generated {totalGeneratedRecords} records in {generationAttempt} attempts | Query returned {finalResult.ResultData.Rows.Count} rows | {totalStopwatch.ElapsedMilliseconds:F0}ms";
+                lblStatus.Text = $"✅ Generated {totalGeneratedRecords} records (PREVIEW ONLY - ROLLBACK) | Query returned {finalResult.ResultData.Rows.Count} rows | {totalStopwatch.ElapsedMilliseconds:F0}ms";
                 lblStatus.ForeColor = Color.Green;
                 
-                lblGenerateStats.Text = $"✅ Completed: {generationAttempt} attempts | Generated: {totalGeneratedRecords} records | Result: {finalResult.ResultData.Rows.Count} rows | Time: {totalStopwatch.Elapsed.TotalSeconds:F1}s";
+                lblGenerateStats.Text = $"✅ Completed: {generationAttempt} attempts | Generated: {totalGeneratedRecords} records (ROLLBACK) | Result: {finalResult.ResultData.Rows.Count} rows | Time: {totalStopwatch.Elapsed.TotalSeconds:F1}s";
                 
                 SaveSettings();
                 
                 // Show success details
-                var successMessage = $"🎉 Generate Test Data thành công!\n\n" +
+                var successMessage = $"🎉 Generate Test Data Preview thành công!\n\n" +
                                    $"• Số lần generate: {generationAttempt} attempts\n" +
-                                   $"• Đã tạo và lưu {totalGeneratedRecords} bản ghi vào database\n" +
+                                   $"• Đã tạo TẠM THỜI {totalGeneratedRecords} bản ghi để preview\n" +
                                    $"• Thời gian tổng cộng: {totalStopwatch.Elapsed.TotalSeconds:F2} giây\n" +
                                    $"• Kết quả truy vấn: {finalResult.ResultData.Rows.Count} dòng\n" +
                                    $"• AI Model: Google Gemini (Smart Analysis)\n\n" +
-                                   $"✅ Data đã được lưu THẬT vào database!\n" +
+                                   $"🔄 Data đã được ROLLBACK - chỉ hiển thị để preview!\n" +
                                    $"🤖 AI đã phân tích SQL query và tạo data phù hợp\n" +
-                                   $"để đảm bảo query phức tạp với JOIN trả về kết quả.";
+                                   $"📊 Dữ liệu hiển thị trên DataGridView chỉ để xem,\n" +
+                                   $"    không được lưu vào database thật.";
                 
-                MessageBox.Show(successMessage, "Generate Data Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(successMessage, "Generate Data Preview (Rollback)", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             else
             {
