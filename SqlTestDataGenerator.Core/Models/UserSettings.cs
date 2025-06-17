@@ -11,4 +11,9 @@ public class UserSettings
     public bool SaveConnectionHistory { get; set; } = true;
     public List<string> RecentConnections { get; set; } = new();
     public List<string> RecentQueries { get; set; } = new();
+    
+    /// <summary>
+    /// Folder path to export generated SQL INSERT statements
+    /// </summary>
+    public string SqlExportFolder { get; set; } = "sql-exports";
 } 

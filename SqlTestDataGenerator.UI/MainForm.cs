@@ -2,6 +2,7 @@ using SqlTestDataGenerator.Core.Services;
 using SqlTestDataGenerator.Core.Models;
 using System.Data;
 using MySqlConnector;
+using Dapper;
 
 namespace SqlTestDataGenerator.UI;
 
@@ -18,10 +19,14 @@ public partial class MainForm : Form
     private Button btnGenerateData = null!;
     private Button btnRunQuery = null!;
     private Button btnTestConnection = null!;
+    private Button btnExecuteFromFile = null!;
     private DataGridView dataGridView = null!;
     private Label lblStatus = null!;
     private Label lblGenerateStats = null!;
     private ProgressBar progressBar = null!;
+    
+    // SQL Export tracking
+    private string _lastGeneratedSqlFilePath = string.Empty;
 
     public MainForm()
     {
@@ -164,10 +169,27 @@ public partial class MainForm : Form
         btnRunQuery.FlatAppearance.BorderSize = 0;
         btnRunQuery.Click += btnRunQuery_Click;
 
+        // Commit Button
+        btnExecuteFromFile = new Button
+        {
+            Text = "💾 Commit",
+            Location = new Point(630, 383),
+            Size = new Size(170, 42),
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            BackColor = Color.FromArgb(76, 175, 80),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Enabled = false // Disabled initially
+        };
+        btnExecuteFromFile.FlatAppearance.BorderSize = 0;
+        btnExecuteFromFile.Click += btnExecuteFromFile_Click;
+
         // Progress Bar
         progressBar = new ProgressBar
         {
-            Location = new Point(640, 390),
+            Location = new Point(820, 390),
             Size = new Size(220, 25),
             Style = ProgressBarStyle.Marquee,
             MarqueeAnimationSpeed = 30,
@@ -231,7 +253,7 @@ public partial class MainForm : Form
             lblDbType, cboDbType,
             lblConnection, txtConnectionString, btnTestConnection,
             lblSqlQuery, sqlEditor,
-            lblRecords, numRecords, btnGenerateData, btnRunQuery, progressBar,
+            lblRecords, numRecords, btnGenerateData, btnRunQuery, btnExecuteFromFile, progressBar,
             lblResults, dataGridView, 
             lblStatus, lblGenerateStats
         });
@@ -756,6 +778,21 @@ public partial class MainForm : Form
             {
                 dataGridView.DataSource = finalResult.ResultData;
                 
+                // Store SQL file path and enable execute button
+                _lastGeneratedSqlFilePath = finalResult.ExportedFilePath ?? string.Empty;
+                btnExecuteFromFile.Enabled = !string.IsNullOrEmpty(_lastGeneratedSqlFilePath);
+                
+                // Update button text to show filename
+                if (btnExecuteFromFile.Enabled)
+                {
+                    var fileName = Path.GetFileName(_lastGeneratedSqlFilePath);
+                    btnExecuteFromFile.Text = $"💾 Commit: {fileName}";
+                }
+                else
+                {
+                    btnExecuteFromFile.Text = "💾 Commit";
+                }
+                
                 lblStatus.Text = $"✅ Generated {totalGeneratedRecords} records (PREVIEW ONLY - ROLLBACK) | Query returned {finalResult.ResultData.Rows.Count} rows | {totalStopwatch.ElapsedMilliseconds:F0}ms";
                 lblStatus.ForeColor = Color.Green;
                 
@@ -763,17 +800,23 @@ public partial class MainForm : Form
                 
                 SaveSettings();
                 
-                // Show success details
+                // Show success details with file export info
+                var fileInfo = !string.IsNullOrEmpty(_lastGeneratedSqlFilePath) 
+                    ? $"📁 SQL File: {Path.GetFileName(_lastGeneratedSqlFilePath)}" 
+                    : "⚠️ SQL file export failed";
+                
                 var successMessage = $"🎉 Generate Test Data Preview thành công!\n\n" +
                                    $"• Số lần generate: {generationAttempt} attempts\n" +
                                    $"• Đã tạo TẠM THỜI {totalGeneratedRecords} bản ghi để preview\n" +
                                    $"• Thời gian tổng cộng: {totalStopwatch.Elapsed.TotalSeconds:F2} giây\n" +
                                    $"• Kết quả truy vấn: {finalResult.ResultData.Rows.Count} dòng\n" +
-                                   $"• AI Model: Google Gemini (Smart Analysis)\n\n" +
+                                   $"• AI Model: Google Gemini (Smart Analysis)\n" +
+                                   $"• {fileInfo}\n\n" +
                                    $"🔄 Data đã được ROLLBACK - chỉ hiển thị để preview!\n" +
                                    $"🤖 AI đã phân tích SQL query và tạo data phù hợp\n" +
                                    $"📊 Dữ liệu hiển thị trên DataGridView chỉ để xem,\n" +
-                                   $"    không được lưu vào database thật.";
+                                   $"    không được lưu vào database thật.\n\n" +
+                                   $"💾 Để lưu data thật vào DB, click 'Commit'!";
                 
                 MessageBox.Show(successMessage, "Generate Data Preview (Rollback)", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -908,6 +951,145 @@ public partial class MainForm : Form
         }
         finally
         {
+            btnRunQuery.Enabled = true;
+            progressBar.Visible = false;
+        }
+    }
+
+    private static DataTable CreateDataTableFromDynamic(IEnumerable<dynamic> data)
+    {
+        var dataTable = new DataTable();
+        var items = data.ToList();
+        
+        if (!items.Any()) return dataTable;
+
+        // Get column names from first row
+        var first = items.First() as IDictionary<string, object>;
+        if (first != null)
+        {
+            foreach (var key in first.Keys)
+            {
+                dataTable.Columns.Add(key);
+            }
+
+            // Add rows
+            foreach (var item in items)
+            {
+                var row = dataTable.NewRow();
+                var dict = item as IDictionary<string, object>;
+                if (dict != null)
+                {
+                    foreach (var kvp in dict)
+                    {
+                        row[kvp.Key] = kvp.Value ?? DBNull.Value;
+                    }
+                }
+                dataTable.Rows.Add(row);
+            }
+        }
+
+        return dataTable;
+    }
+
+    private async void btnExecuteFromFile_Click(object? sender, EventArgs e)
+    {
+        if (_engineService == null)
+        {
+            MessageBox.Show("Engine service chưa được khởi tạo!", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_lastGeneratedSqlFilePath) || !File.Exists(_lastGeneratedSqlFilePath))
+        {
+            MessageBox.Show("Không tìm thấy file SQL! Vui lòng Generate data trước.", "File Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            btnExecuteFromFile.Enabled = false;
+            btnGenerateData.Enabled = false;
+            btnRunQuery.Enabled = false;
+            progressBar.Visible = true;
+            
+            lblStatus.Text = "💾 Committing SQL from file to database...";
+            lblStatus.ForeColor = Color.Blue;
+            Application.DoEvents();
+
+            // Read SQL statements from file
+            var sqlContent = await File.ReadAllTextAsync(_lastGeneratedSqlFilePath);
+            var sqlStatements = sqlContent.Split(new[] { ";\r\n", ";\n" }, StringSplitOptions.RemoveEmptyEntries)
+                                         .Where(s => !string.IsNullOrWhiteSpace(s))
+                                         .Select(s => s.Trim() + ";")
+                                         .ToList();
+
+            Console.WriteLine($"[MainForm] Reading {sqlStatements.Count} SQL statements from file: {_lastGeneratedSqlFilePath}");
+
+            using var connection = SqlTestDataGenerator.Core.Services.DbConnectionFactory.CreateConnection(cboDbType.Text, txtConnectionString.Text);
+            connection.Open();
+
+            using var transaction = connection.BeginTransaction();
+            try
+            {
+                int executedCount = 0;
+                foreach (var sqlStatement in sqlStatements)
+                {
+                    if (string.IsNullOrWhiteSpace(sqlStatement)) continue;
+                    
+                    Console.WriteLine($"[MainForm] Executing: {sqlStatement.Substring(0, Math.Min(100, sqlStatement.Length))}...");
+                    await connection.ExecuteAsync(sqlStatement, transaction: transaction, commandTimeout: 300);
+                    executedCount++;
+                }
+
+                // Commit transaction
+                transaction.Commit();
+                Console.WriteLine($"[MainForm] Successfully executed and committed {executedCount} SQL statements");
+
+                // Run the original query to show results
+                var queryResult = await connection.QueryAsync(sqlEditor.Text, commandTimeout: 300);
+                var resultTable = CreateDataTableFromDynamic(queryResult);
+                dataGridView.DataSource = resultTable;
+
+                lblStatus.Text = $"✅ Committed {executedCount} SQL statements successfully! Query returned {resultTable.Rows.Count} rows";
+                lblStatus.ForeColor = Color.Green;
+
+                lblGenerateStats.Text = $"✅ SQL Committed: {executedCount} statements | Result: {resultTable.Rows.Count} rows | Data saved permanently";
+
+                // Show success message
+                var successMessage = $"🎉 Execute SQL File thành công!\n\n" +
+                                   $"• Đã thực thi {executedCount} câu lệnh SQL từ file\n" +
+                                   $"• File: {Path.GetFileName(_lastGeneratedSqlFilePath)}\n" +
+                                   $"• Kết quả truy vấn: {resultTable.Rows.Count} dòng\n" +
+                                   $"• Trạng thái: Dữ liệu đã được LÂN VÀO DATABASE\n\n" +
+                                   $"✅ Tất cả dữ liệu đã được lưu vào database thật!";
+
+                MessageBox.Show(successMessage, "Execute SQL File Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            lblStatus.Text = $"❌ Execute SQL File failed: {ex.Message}";
+            lblStatus.ForeColor = Color.Red;
+            
+            var errorMessage = $"❌ Lỗi khi thực thi SQL file:\n\n{ex.Message}\n\n" +
+                             $"File: {Path.GetFileName(_lastGeneratedSqlFilePath)}\n" +
+                             $"Vui lòng kiểm tra:\n" +
+                             $"• Database connection\n" +
+                             $"• SQL syntax trong file\n" +
+                             $"• Table permissions\n" +
+                             $"• Foreign key constraints";
+            
+            MessageBox.Show(errorMessage, "Execute SQL File Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            btnExecuteFromFile.Enabled = true;
+            btnGenerateData.Enabled = true;
             btnRunQuery.Enabled = true;
             progressBar.Visible = false;
         }

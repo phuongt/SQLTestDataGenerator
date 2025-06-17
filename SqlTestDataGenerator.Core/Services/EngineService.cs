@@ -231,6 +231,14 @@ public class EngineService
             
             result.GeneratedInserts = insertStatements.Select(i => i.SqlStatement).ToList();
 
+            // Export SQL statements to file before executing
+            if (result.GeneratedInserts.Any())
+            {
+                var exportPath = await ExportSqlToFileAsync(result.GeneratedInserts, request.DatabaseType);
+                result.ExportedFilePath = exportPath;
+                Console.WriteLine($"[EngineService] Exported {result.GeneratedInserts.Count} SQL statements to: {exportPath}");
+            }
+
             // Step 3: Execute and COMMIT data to database
             _logger.Information("Executing test data insertion and committing to database");
             Console.WriteLine($"[EngineService] Executing {insertStatements.Count} INSERT statements");
@@ -735,6 +743,68 @@ public class EngineService
         foreach (var violation in validationResult.Violations)
         {
             Console.WriteLine($"[EngineService]   - {violation}");
+        }
+    }
+
+    /// <summary>
+    /// Export generated SQL INSERT statements to file
+    /// </summary>
+    private async Task<string> ExportSqlToFileAsync(List<string> sqlStatements, string databaseType)
+    {
+        try
+        {
+            // Create export directory if it doesn't exist
+            var exportDir = "sql-exports";
+            if (!Directory.Exists(exportDir))
+            {
+                Directory.CreateDirectory(exportDir);
+                Console.WriteLine($"[EngineService] Created export directory: {exportDir}");
+            }
+
+            // Generate filename with timestamp
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var fileName = $"generated_inserts_{databaseType}_{timestamp}.sql";
+            var filePath = Path.Combine(exportDir, fileName);
+
+            // Prepare SQL content with header
+            var sqlContent = new List<string>
+            {
+                $"-- Generated SQL INSERT statements",
+                $"-- Database Type: {databaseType}",
+                $"-- Generated at: {DateTime.Now:yyyy-MM-dd HH:mm:ss}",
+                $"-- Total statements: {sqlStatements.Count}",
+                "",
+                "-- Execute all statements in a transaction:",
+                "-- BEGIN TRANSACTION;",
+                ""
+            };
+
+            // Add all SQL statements
+            sqlContent.AddRange(sqlStatements);
+
+            // Add footer
+            sqlContent.AddRange(new[]
+            {
+                "",
+                "-- COMMIT;",
+                $"-- End of generated SQL ({sqlStatements.Count} statements)"
+            });
+
+            // Write to file
+            await File.WriteAllLinesAsync(filePath, sqlContent);
+            
+            _logger.Information("Exported {StatementCount} SQL statements to file: {FilePath}", sqlStatements.Count, filePath);
+            Console.WriteLine($"[EngineService] SQL export completed: {filePath}");
+
+            return filePath;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to export SQL statements to file");
+            Console.WriteLine($"[EngineService] SQL export failed: {ex.Message}");
+            
+            // Return empty string if export failed
+            return string.Empty;
         }
     }
 } 

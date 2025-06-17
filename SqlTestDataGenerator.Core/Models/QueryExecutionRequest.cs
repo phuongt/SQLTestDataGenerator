@@ -19,4 +19,5 @@ public class QueryExecutionResult
     public List<string> GeneratedInserts { get; set; } = new();
     public string? ErrorMessage { get; set; }
     public bool Success { get; set; }
+    public string? ExportedFilePath { get; set; }
 } 
