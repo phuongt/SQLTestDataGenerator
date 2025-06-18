@@ -7,38 +7,45 @@ namespace SqlTestDataGenerator.Core.Services;
 
 /// <summary>
 /// Gemini AI-powered data generation service với constraint validation và regeneration
+/// Enhanced với EnhancedGeminiFlashRotationService với daily API limits
 /// Generates meaningful data tuân thủ engine-extracted constraints
 /// </summary>
 public class GeminiAIDataGenerationService : IAIDataGenerationService
 {
     private readonly ILogger _logger;
-    private readonly HttpClient _httpClient;
-    private readonly string _apiKey;
-    private readonly string _apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
     private readonly ConstraintValidator _constraintValidator;
+    private readonly EnhancedGeminiFlashRotationService _flashRotationService;
 
     // Configuration constants
     private const int MAX_REGENERATION_ATTEMPTS = 3;
-    private const int REGENERATION_TIMEOUT_SECONDS = 120; // Tăng lên 2 phút cho queries phức tạp
-    
-    // Rate limiting để tránh quota exceeded
-    private static readonly SemaphoreSlim _rateLimitSemaphore = new SemaphoreSlim(1, 1);
-    private static DateTime _lastApiCall = DateTime.MinValue;
-    private static readonly TimeSpan _minDelayBetweenCalls = TimeSpan.FromSeconds(5);
+
+    // Public property to access flash rotation service for UI display
+    public EnhancedGeminiFlashRotationService FlashRotationService => _flashRotationService;
 
     public GeminiAIDataGenerationService(string apiKey)
     {
         _logger = Log.Logger.ForContext<GeminiAIDataGenerationService>();
-        _httpClient = new HttpClient();
-        _httpClient.Timeout = TimeSpan.FromMinutes(2); // Tăng timeout lên 2 phút cho queries phức tạp
-        _apiKey = apiKey;
         _constraintValidator = new ConstraintValidator();
+        _flashRotationService = new EnhancedGeminiFlashRotationService(apiKey);
         
-        if (string.IsNullOrEmpty(_apiKey))
+        if (string.IsNullOrEmpty(apiKey))
         {
             _logger.Warning("Gemini API key is not provided. AI generation will be disabled.");
         }
+        else
+        {
+            _logger.Information("🤖 AI Service initialized with EnhancedGeminiFlashRotationService");
+            var stats = _flashRotationService.GetModelStatistics();
+            _logger.Information("🔄 Using {TotalModels} Flash models with {HealthyModels} healthy models", 
+                stats["TotalModels"], stats["HealthyModels"]);
+            
+            var apiStats = _flashRotationService.GetAPIUsageStatistics();
+            _logger.Information("📊 Daily API usage: {UsedCalls}/{LimitCalls} calls", 
+                apiStats["DailyCallsUsed"], apiStats["DailyCallLimit"]);
+        }
     }
+
+
 
     /// <summary>
     /// Generate column value với constraint validation và regeneration
@@ -47,7 +54,8 @@ public class GeminiAIDataGenerationService : IAIDataGenerationService
     {
         try
         {
-            if (string.IsNullOrEmpty(_apiKey))
+            // Check availability through EnhancedGeminiFlashRotationService
+            if (!await IsAvailableAsync())
             {
                 _logger.Information("AI unavailable, falling back to constraint-based generation");
                 return GenerateFallbackValue(context, recordIndex);
@@ -468,17 +476,10 @@ public class GeminiAIDataGenerationService : IAIDataGenerationService
 
     public async Task<bool> IsAvailableAsync()
     {
-        if (string.IsNullOrEmpty(_apiKey))
-        {
-            return false;
-        }
-
         try
         {
-            // Simple test call to check API availability
-            var testPrompt = "Generate the word 'test'";
-            var response = await CallGeminiAPIAsync(testPrompt);
-            return !string.IsNullOrEmpty(response);
+            // Check availability through EnhancedGeminiFlashRotationService
+            return _flashRotationService.CanCallAPINow();
         }
         catch
         {
@@ -488,68 +489,14 @@ public class GeminiAIDataGenerationService : IAIDataGenerationService
 
     #region Helper Methods
 
+    /// <summary>
+    /// Enhanced CallGeminiAPIAsync với Flash Model Rotation và Smart Retry Logic
+    /// </summary>
     private async Task<string> CallGeminiAPIAsync(string prompt)
     {
-        // Rate limiting: chỉ cho phép 1 call mỗi 5 giây
-        await _rateLimitSemaphore.WaitAsync();
-        try
-        {
-            var timeSinceLastCall = DateTime.UtcNow - _lastApiCall;
-            if (timeSinceLastCall < _minDelayBetweenCalls)
-            {
-                var delayNeeded = _minDelayBetweenCalls - timeSinceLastCall;
-                _logger.Information("Rate limiting: waiting {DelayMs}ms before next API call", 
-                    delayNeeded.TotalMilliseconds);
-                await Task.Delay(delayNeeded);
-            }
-
-            var requestBody = new
-            {
-                contents = new[]
-                {
-                    new
-                    {
-                        parts = new[]
-                        {
-                            new { text = prompt }
-                        }
-                    }
-                },
-                generationConfig = new
-                {
-                    temperature = 0.7,
-                    maxOutputTokens = 100,
-                    topP = 0.8,
-                    topK = 10
-                }
-            };
-
-            var jsonContent = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-            var requestUrl = $"{_apiUrl}?key={_apiKey}";
-            _logger.Information("Making Gemini API call with rate limiting");
-            
-            var response = await _httpClient.PostAsync(requestUrl, content);
-            _lastApiCall = DateTime.UtcNow;
-
-            if (response.IsSuccessStatusCode)
-            {
-                var responseBody = await response.Content.ReadAsStringAsync();
-                _logger.Information("Gemini API call successful");
-                return responseBody;
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.Error("Gemini API call failed: {StatusCode} - {Error}", response.StatusCode, errorContent);
-                throw new Exception($"Gemini API call failed: {response.StatusCode}");
-            }
-        }
-        finally
-        {
-            _rateLimitSemaphore.Release();
-        }
+        // Delegate all API calls to EnhancedGeminiFlashRotationService
+        // với comprehensive daily limits và time availability checking
+        return await _flashRotationService.CallGeminiAPIAsync(prompt, 100);
     }
 
     private object ParseGeminiResponse(string response, GenerationContext context)

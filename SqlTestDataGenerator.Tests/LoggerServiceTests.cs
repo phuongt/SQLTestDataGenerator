@@ -13,20 +13,21 @@ public class LoggerServiceTests
     [TestInitialize]
     public void Setup()
     {
-        _testLogPath = Path.Combine(Path.GetTempPath(), $"test_log_{Guid.NewGuid()}.txt");
-        _testSettings = new LoggingSettings
-        {
-            FilePath = _testLogPath,
-            LogLevel = "Information",
-            EnableUILogging = true,
-            MaxFileSizeMB = 1
-        };
+        // ✅ FIX: Use CentralizedLoggingManager to create consistent logging
+        CentralizedLoggingManager.Initialize();
+        
+        // Create LoggingSettings using centralized system
+        _testSettings = CentralizedLoggingManager.CreateLoggingSettings(LogComponent.Test);
+        _testLogPath = _testSettings.FilePath;
+        
+        Console.WriteLine($"[LoggerServiceTests] Using centralized log path: {_testLogPath}");
     }
 
     [TestCleanup]
     public void Cleanup()
     {
-        if (File.Exists(_testLogPath))
+        // Only cleanup if it's a temp file (not centralized log)
+        if (_testLogPath.Contains("temp") && File.Exists(_testLogPath))
         {
             File.Delete(_testLogPath);
         }
@@ -36,7 +37,7 @@ public class LoggerServiceTests
     public void LogInfo_ShouldCreateLogEntry()
     {
         // Arrange
-        using var logger = new LoggerService(_testSettings);
+        var logger = new LoggerService(_testSettings);
         var logCreated = false;
         LogEntry? capturedEntry = null;
 
@@ -48,6 +49,16 @@ public class LoggerServiceTests
 
         // Act
         logger.LogInfo("Test info message", "TEST_CONTEXT", new { TestParam = "value" });
+        
+        // Force flush to file
+        logger.Dispose();
+        
+        // Verify file logging
+        if (File.Exists(_testLogPath))
+        {
+            var logContent = File.ReadAllText(_testLogPath);
+            Console.WriteLine($"[LogInfo_ShouldCreateLogEntry] Log file content: {logContent}");
+        }
 
         // Assert
         Assert.IsTrue(logCreated, "Log entry should be created");
@@ -62,7 +73,7 @@ public class LoggerServiceTests
     public void LogError_WithException_ShouldCaptureExceptionDetails()
     {
         // Arrange
-        using var logger = new LoggerService(_testSettings);
+        var logger = new LoggerService(_testSettings);
         Exception exception;
         
         // Create exception with stack trace by throwing and catching it
@@ -89,6 +100,16 @@ public class LoggerServiceTests
 
         // Act
         logger.LogError("Test error message", exception, "ERROR_CONTEXT");
+        
+        // Force flush to file
+        logger.Dispose();
+        
+        // Verify file logging
+        if (File.Exists(_testLogPath))
+        {
+            var logContent = File.ReadAllText(_testLogPath);
+            Console.WriteLine($"[LogError_WithException] Log file content: {logContent}");
+        }
 
         // Wait a short time to ensure the event is processed
         var timeout = DateTime.Now.AddMilliseconds(100);
@@ -162,7 +183,7 @@ public class LoggerServiceTests
     public void GetLogEntries_ShouldReturnEntriesInDescendingOrder()
     {
         // Arrange
-        using var logger = new LoggerService(_testSettings);
+        var logger = new LoggerService(_testSettings);
 
         // Act
         logger.LogInfo("First message");
@@ -170,6 +191,16 @@ public class LoggerServiceTests
         logger.LogWarning("Second message");
         Thread.Sleep(10);
         logger.LogError("Third message");
+        
+        // Force flush to file
+        logger.Dispose();
+        
+        // Verify file logging
+        if (File.Exists(_testLogPath))
+        {
+            var logContent = File.ReadAllText(_testLogPath);
+            Console.WriteLine($"[GetLogEntries] Log file content: {logContent}");
+        }
 
         var entries = logger.GetLogEntries().ToList();
 

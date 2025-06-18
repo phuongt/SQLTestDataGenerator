@@ -16,6 +16,9 @@ public class EngineService
     private readonly ConstraintValidator _constraintValidator;
     private readonly ILogger _logger;
 
+    // Public property to access DataGenService for UI display
+    public DataGenService DataGenService => _dataGenService;
+
     public EngineService(string? openAiApiKey = null)
     {
         // Initialize logging first
@@ -39,22 +42,17 @@ public class EngineService
         _constraintExtractor = new ComprehensiveConstraintExtractor();
         _constraintValidator = new ConstraintValidator();
 
-        // Check if logs directory is accessible
+        // Initialize centralized logging manager
         try
         {
-            var logsDir = Path.Combine(Directory.GetCurrentDirectory(), "logs");
-            if (!Directory.Exists(logsDir))
-            {
-                Directory.CreateDirectory(logsDir);
-            }
-            Console.WriteLine($"[EngineService] Logs directory confirmed: {logsDir}");
+            CentralizedLoggingManager.Initialize();
+            var logsDir = CentralizedLoggingManager.GetLogsDirectory();
+            Console.WriteLine($"[EngineService] Centralized logs directory: {logsDir}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[EngineService] Warning: Could not create logs directory: {ex.Message}");
+            Console.WriteLine($"[EngineService] Warning: Could not initialize centralized logging: {ex.Message}");
         }
-
-        Console.WriteLine($"[EngineService] Expected log path: {Path.Combine(Directory.GetCurrentDirectory(), "logs")}");
     }
 
     public async Task<bool> TestConnectionAsync(string databaseType, string connectionString)
@@ -231,12 +229,12 @@ public class EngineService
             
             result.GeneratedInserts = insertStatements.Select(i => i.SqlStatement).ToList();
 
-            // Export SQL statements to file before executing
+            // Export SQL statements to file WITH ID columns included before executing
             if (result.GeneratedInserts.Any())
             {
-                var exportPath = await ExportSqlToFileAsync(result.GeneratedInserts, request.DatabaseType);
+                var exportPath = await ExportSqlToFileWithIdsAsync(insertStatements, databaseInfo, request.DatabaseType);
                 result.ExportedFilePath = exportPath;
-                Console.WriteLine($"[EngineService] Exported {result.GeneratedInserts.Count} SQL statements to: {exportPath}");
+                Console.WriteLine($"[EngineService] Exported {result.GeneratedInserts.Count} SQL statements WITH IDs to: {exportPath}");
             }
 
             // Step 3: Execute and COMMIT data to database
@@ -761,12 +759,13 @@ public class EngineService
                 Console.WriteLine($"[EngineService] Created export directory: {exportDir}");
             }
 
-            // Generate filename with timestamp
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var fileName = $"generated_inserts_{databaseType}_{timestamp}.sql";
+            // Generate filename with timestamp and milliseconds for uniqueness
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+            var uniqueId = Guid.NewGuid().ToString("N")[0..6]; // 6 chars from GUID
+            var fileName = $"generated_inserts_{databaseType}_{timestamp}_{uniqueId}.sql";
             var filePath = Path.Combine(exportDir, fileName);
 
-            // Prepare SQL content with header
+            // Prepare SQL content with header and foreign key management
             var sqlContent = new List<string>
             {
                 $"-- Generated SQL INSERT statements",
@@ -779,16 +778,42 @@ public class EngineService
                 ""
             };
 
+            // Add foreign key constraint management for MySQL
+            if (databaseType.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
+            {
+                sqlContent.AddRange(new[]
+                {
+                    "-- Disable foreign key checks temporarily",
+                    "SET FOREIGN_KEY_CHECKS = 0;",
+                    ""
+                });
+            }
+
             // Add all SQL statements
             sqlContent.AddRange(sqlStatements);
 
-            // Add footer
-            sqlContent.AddRange(new[]
+            // Add footer with foreign key re-enable
+            if (databaseType.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
             {
-                "",
-                "-- COMMIT;",
-                $"-- End of generated SQL ({sqlStatements.Count} statements)"
-            });
+                sqlContent.AddRange(new[]
+                {
+                    "",
+                    "-- Re-enable foreign key checks",
+                    "SET FOREIGN_KEY_CHECKS = 1;",
+                    "",
+                    "-- COMMIT;",
+                    $"-- End of generated SQL ({sqlStatements.Count} statements)"
+                });
+            }
+            else
+            {
+                sqlContent.AddRange(new[]
+                {
+                    "",
+                    "-- COMMIT;",
+                    $"-- End of generated SQL ({sqlStatements.Count} statements)"
+                });
+            }
 
             // Write to file
             await File.WriteAllLinesAsync(filePath, sqlContent);
@@ -806,5 +831,276 @@ public class EngineService
             // Return empty string if export failed
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Export generated SQL INSERT statements to file WITH ID columns included
+    /// Rebuilds INSERT statements to include auto-increment/identity columns with sequential values
+    /// </summary>
+    private async Task<string> ExportSqlToFileWithIdsAsync(List<InsertStatement> insertStatements, DatabaseInfo databaseInfo, string databaseType)
+    {
+        try
+        {
+            Console.WriteLine($"[EngineService] Starting SQL export WITH IDs for {insertStatements.Count} statements");
+            
+            // Create export directory if it doesn't exist
+            var exportDir = "sql-exports";
+            if (!Directory.Exists(exportDir))
+            {
+                Directory.CreateDirectory(exportDir);
+                Console.WriteLine($"[EngineService] Created export directory: {exportDir}");
+            }
+
+            // Generate filename with timestamp and milliseconds for uniqueness
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+            var uniqueId = Guid.NewGuid().ToString("N")[0..6]; // 6 chars from GUID
+            var fileName = $"generated_inserts_{databaseType}_{timestamp}_{uniqueId}.sql";
+            var filePath = Path.Combine(exportDir, fileName);
+
+            // Prepare SQL content with header and foreign key management
+            var sqlContent = new List<string>
+            {
+                $"-- Generated SQL INSERT statements (WITH ID COLUMNS)",
+                $"-- Database Type: {databaseType}",
+                $"-- Generated at: {DateTime.Now:yyyy-MM-dd HH:mm:ss}",
+                $"-- Total statements: {insertStatements.Count}",
+                $"-- Note: ID columns included with sequential values (1,2,3...)",
+                "",
+                "-- Execute all statements in a transaction:",
+                "-- BEGIN TRANSACTION;",
+                ""
+            };
+
+            // Add foreign key constraint management for MySQL
+            if (databaseType.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
+            {
+                sqlContent.AddRange(new[]
+                {
+                    "-- Disable foreign key checks temporarily",
+                    "SET FOREIGN_KEY_CHECKS = 0;",
+                    "",
+                    "-- Reset auto_increment to start from 1 for all tables",
+                });
+                
+                // Add AUTO_INCREMENT reset for each table
+                var tableNames = insertStatements.Select(i => ExtractTableNameFromInsert(i.SqlStatement)).Distinct();
+                foreach (var tableName in tableNames)
+                {
+                    sqlContent.Add($"ALTER TABLE `{tableName}` AUTO_INCREMENT = 1;");
+                }
+                sqlContent.Add("");
+            }
+
+            // Rebuild INSERT statements with ID columns
+            var commonInsertBuilder = new CommonInsertBuilder();
+            var recordCountByTable = new Dictionary<string, int>();
+            
+            foreach (var insertStatement in insertStatements.OrderBy(i => i.Priority))
+            {
+                try
+                {
+                    var tableName = ExtractTableNameFromInsert(insertStatement.SqlStatement);
+                    
+                    // Track record count per table for ID generation
+                    if (!recordCountByTable.ContainsKey(tableName))
+                        recordCountByTable[tableName] = 0;
+                    
+                    var recordIndex = recordCountByTable[tableName];
+                    recordCountByTable[tableName]++;
+
+                    // Get table schema
+                    if (databaseInfo.Tables.TryGetValue(tableName, out var tableSchema))
+                    {
+                        // Parse original record data from INSERT statement
+                        var recordData = ParseInsertStatementToRecord(insertStatement.SqlStatement, tableSchema);
+                        
+                        if (recordData != null)
+                        {
+                            // Rebuild INSERT with ID included
+                            var databaseTypeEnum = Enum.Parse<DatabaseType>(databaseType, true);
+                            var insertWithId = commonInsertBuilder.BuildInsertStatementWithIds(
+                                tableName, recordData, tableSchema, databaseTypeEnum, recordIndex);
+                            
+                            sqlContent.Add(insertWithId);
+                            Console.WriteLine($"[EngineService] Rebuilt INSERT for {tableName} #{recordIndex + 1} with ID");
+                        }
+                        else
+                        {
+                            // Fallback to original statement if parsing fails
+                            sqlContent.Add(insertStatement.SqlStatement);
+                            Console.WriteLine($"[EngineService] Using original INSERT for {tableName} (parsing failed)");
+                        }
+                    }
+                    else
+                    {
+                        // Fallback to original statement if table schema not found
+                        sqlContent.Add(insertStatement.SqlStatement);
+                        Console.WriteLine($"[EngineService] Using original INSERT for {tableName} (schema not found)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[EngineService] Error rebuilding INSERT: {ex.Message}");
+                    // Fallback to original statement
+                    sqlContent.Add(insertStatement.SqlStatement);
+                }
+            }
+
+            // Add footer with foreign key re-enable
+            if (databaseType.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
+            {
+                sqlContent.AddRange(new[]
+                {
+                    "",
+                    "-- Re-enable foreign key checks",
+                    "SET FOREIGN_KEY_CHECKS = 1;",
+                    "",
+                    "-- COMMIT;",
+                    $"-- End of generated SQL WITH IDs ({insertStatements.Count} statements)"
+                });
+            }
+            else
+            {
+                sqlContent.AddRange(new[]
+                {
+                    "",
+                    "-- COMMIT;",
+                    $"-- End of generated SQL WITH IDs ({insertStatements.Count} statements)"
+                });
+            }
+
+            // Write to file
+            await File.WriteAllLinesAsync(filePath, sqlContent);
+            
+            _logger.Information("Exported {StatementCount} SQL statements WITH IDs to file: {FilePath}", insertStatements.Count, filePath);
+            Console.WriteLine($"[EngineService] SQL export WITH IDs completed: {filePath}");
+
+            return filePath;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to export SQL statements with IDs to file");
+            Console.WriteLine($"[EngineService] SQL export WITH IDs failed: {ex.Message}");
+            
+            // Return empty string if export failed
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Parse INSERT statement back to record data dictionary
+    /// Extracts column names and values from INSERT INTO ... VALUES (...) format
+    /// </summary>
+    private Dictionary<string, object>? ParseInsertStatementToRecord(string insertSql, TableSchema tableSchema)
+    {
+        try
+        {
+            // Pattern: INSERT INTO `table` (`col1`, `col2`) VALUES ('val1', 'val2');
+            var match = System.Text.RegularExpressions.Regex.Match(insertSql, 
+                @"INSERT INTO\s+[`']?(\w+)[`']?\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)", 
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            
+            if (!match.Success) return null;
+            
+            var columnsStr = match.Groups[2].Value;
+            var valuesStr = match.Groups[3].Value;
+            
+            // Parse column names (remove quotes and trim)
+            var columns = columnsStr.Split(',')
+                .Select(c => c.Trim().Trim('`', '\'', '"'))
+                .ToArray();
+            
+            // Parse values (basic parsing - handles quoted strings and nulls)
+            var values = ParseSqlValues(valuesStr);
+            
+            if (columns.Length != values.Length) return null;
+            
+            var record = new Dictionary<string, object>();
+            for (int i = 0; i < columns.Length; i++)
+            {
+                record[columns[i]] = values[i];
+            }
+            
+            return record;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[EngineService] Failed to parse INSERT statement: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parse SQL VALUES clause into array of values
+    /// Handles basic cases: 'string', 123, NULL, etc.
+    /// </summary>
+    private object[] ParseSqlValues(string valuesStr)
+    {
+        var values = new List<object>();
+        var chars = valuesStr.ToCharArray();
+        var currentValue = new List<char>();
+        bool inQuotes = false;
+        char quoteChar = '\0';
+        
+        for (int i = 0; i < chars.Length; i++)
+        {
+            var ch = chars[i];
+            
+            if (!inQuotes && (ch == '\'' || ch == '"'))
+            {
+                inQuotes = true;
+                quoteChar = ch;
+                // Don't include quote in value
+            }
+            else if (inQuotes && ch == quoteChar)
+            {
+                inQuotes = false;
+                // Don't include quote in value
+            }
+            else if (!inQuotes && ch == ',')
+            {
+                // End of current value
+                var valueStr = new string(currentValue.ToArray()).Trim();
+                values.Add(ConvertSqlValue(valueStr));
+                currentValue.Clear();
+            }
+            else
+            {
+                currentValue.Add(ch);
+            }
+        }
+        
+        // Add last value
+        if (currentValue.Count > 0)
+        {
+            var valueStr = new string(currentValue.ToArray()).Trim();
+            values.Add(ConvertSqlValue(valueStr));
+        }
+        
+        return values.ToArray();
+    }
+
+    /// <summary>
+    /// Convert SQL value string to appropriate object type
+    /// </summary>
+    private object ConvertSqlValue(string valueStr)
+    {
+        if (string.IsNullOrWhiteSpace(valueStr) || valueStr.Equals("NULL", StringComparison.OrdinalIgnoreCase))
+            return DBNull.Value;
+        
+        if (int.TryParse(valueStr, out int intVal))
+            return intVal;
+        
+        if (decimal.TryParse(valueStr, out decimal decVal))
+            return decVal;
+        
+        if (DateTime.TryParse(valueStr, out DateTime dateVal))
+            return dateVal;
+        
+        if (bool.TryParse(valueStr, out bool boolVal))
+            return boolVal;
+        
+        // Return as string by default
+        return valueStr;
     }
 } 

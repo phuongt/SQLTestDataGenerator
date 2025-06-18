@@ -13,6 +13,10 @@ public class DataGenService
     private readonly CoordinatedDataGenerator _coordinatedGenerator;
     private readonly CommonInsertBuilder _insertBuilder;
     private readonly AIEnhancedCoordinatedDataGenerator? _aiEnhancedGenerator;
+    private readonly GeminiAIDataGenerationService? _geminiAIService;
+
+    // Public property to access Gemini AI service for UI display
+    public GeminiAIDataGenerationService? GeminiAIService => _geminiAIService;
 
     public DataGenService(string? openAiApiKey = null)
     {
@@ -29,10 +33,10 @@ public class DataGenService
             {
                 var metadataService = new SqlMetadataService();
                 var constraintExtractor = new ConstraintExtractorService();
-                var aiService = new GeminiAIDataGenerationService(openAiApiKey);
+                _geminiAIService = new GeminiAIDataGenerationService(openAiApiKey);
                 
                 _aiEnhancedGenerator = new AIEnhancedCoordinatedDataGenerator(
-                    _coordinatedGenerator, constraintExtractor, aiService, metadataService);
+                    _coordinatedGenerator, constraintExtractor, _geminiAIService, metadataService);
                 
                 _logger.Information("AI-enhanced data generation initialized with Gemini API");
             }
@@ -40,6 +44,7 @@ public class DataGenService
             {
                 _logger.Warning(ex, "Failed to initialize AI-enhanced generator, falling back to standard generation");
                 _aiEnhancedGenerator = null;
+                _geminiAIService = null;
             }
         }
     }

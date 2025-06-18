@@ -2,7 +2,7 @@ namespace SqlTestDataGenerator.Core.Models;
 
 public class UserSettings
 {
-    public string DatabaseType { get; set; } = "SQL Server";
+    public string DatabaseType { get; set; } = "MySQL";
     public string ConnectionString { get; set; } = string.Empty;
     public string LastQuery { get; set; } = "SELECT * FROM users";
     public int DefaultRecordCount { get; set; } = 10;

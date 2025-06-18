@@ -25,6 +25,12 @@ public partial class MainForm : Form
     private Label lblGenerateStats = null!;
     private ProgressBar progressBar = null!;
     
+    // API Status Controls
+    private Label lblApiModel = null!;
+    private Label lblApiStatus = null!;
+    private Label lblDailyUsage = null!;
+    private System.Windows.Forms.Timer apiStatusTimer = null!;
+    
     // SQL Export tracking
     private string _lastGeneratedSqlFilePath = string.Empty;
 
@@ -59,7 +65,7 @@ public partial class MainForm : Form
             Font = new Font("Segoe UI", 9F)
         };
         cboDbType.Items.AddRange(new object[] { "SQL Server", "MySQL", "PostgreSQL" });
-        cboDbType.SelectedIndex = 0;
+        cboDbType.SelectedIndex = 2; // Default to MySQL
         cboDbType.SelectedIndexChanged += (s, e) => UpdateConnectionStringTemplate();
 
         // Connection String
@@ -113,7 +119,7 @@ public partial class MainForm : Form
             Location = new Point(150, 165),
             Size = new Size(710, 200),
             Font = new Font("Consolas", 10F),
-            Text = "-- Tìm user tên Phương, sinh 1989, công ty VNEXT, vai trò DD, sắp nghỉ việc\nSELECT \n    u.id, u.username, u.first_name, u.last_name, u.email,\n    u.date_of_birth, u.salary, u.department, u.hire_date,\n    c.name as company_name, c.code as company_code,\n    r.name as role_name, r.code as role_code,\n    ur.expires_at as role_expires,\n    CASE \n        WHEN u.is_active = 0 THEN 'Đã nghỉ việc'\n        WHEN ur.expires_at IS NOT NULL AND ur.expires_at <= DATE_ADD(NOW(), INTERVAL 30 DAY) THEN 'Sắp hết hạn vai trò'\n        ELSE 'Đang làm việc'\n    END as work_status\nFROM users u\nJOIN companies c ON u.company_id = c.id\nJOIN user_roles ur ON u.id = ur.user_id AND ur.is_active = TRUE\nJOIN roles r ON ur.role_id = r.id\nWHERE \n    (u.first_name LIKE '%Phương%' OR u.last_name LIKE '%Phương%')\n    AND YEAR(u.date_of_birth) = 1989\n    AND c.name LIKE '%VNEXT%'\n    AND r.code LIKE '%DD%'\n    AND (u.is_active = 0 OR ur.expires_at <= DATE_ADD(NOW(), INTERVAL 60 DAY))\nORDER BY ur.expires_at ASC, u.created_at DESC",
+            Text = "-- Generic example: Select active users\nSELECT id, name, email, created_at, status\nFROM users \nWHERE status = 'active'\nORDER BY created_at DESC",
             BorderStyle = BorderStyle.FixedSingle
         };
 
@@ -121,16 +127,16 @@ public partial class MainForm : Form
         var lblRecords = new Label
         {
             Text = "Desired Records:",
-            Location = new Point(20, 385),
-            Size = new Size(120, 35),
+            Location = new Point(20, 440),
+            Size = new Size(120, 25),
             Font = new Font("Segoe UI", 9F, FontStyle.Regular),
             TextAlign = ContentAlignment.MiddleLeft
         };
 
         numRecords = new NumericUpDown
         {
-            Location = new Point(150, 388),
-            Size = new Size(100, 28),
+            Location = new Point(150, 440),
+            Size = new Size(100, 25),
             Font = new Font("Segoe UI", 9F),
             Minimum = 1,
             Maximum = 1000,
@@ -141,7 +147,7 @@ public partial class MainForm : Form
         btnGenerateData = new Button
         {
             Text = "🚀 Generate Test Data",
-            Location = new Point(270, 383),
+            Location = new Point(270, 440),
             Size = new Size(170, 42),
             Font = new Font("Segoe UI", 10F, FontStyle.Bold),
             BackColor = Color.FromArgb(33, 150, 243),
@@ -157,7 +163,7 @@ public partial class MainForm : Form
         btnRunQuery = new Button
         {
             Text = "🚀 Run Query",
-            Location = new Point(450, 383),
+            Location = new Point(450, 440),
             Size = new Size(170, 42),
             Font = new Font("Segoe UI", 10F, FontStyle.Bold),
             BackColor = Color.FromArgb(33, 150, 243),
@@ -173,45 +179,46 @@ public partial class MainForm : Form
         btnExecuteFromFile = new Button
         {
             Text = "💾 Commit",
-            Location = new Point(630, 383),
+            Location = new Point(630, 440),
             Size = new Size(170, 42),
             Font = new Font("Segoe UI", 10F, FontStyle.Bold),
-            BackColor = Color.FromArgb(76, 175, 80),
+            BackColor = Color.Gray, // Initially gray because disabled
             ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
-            Cursor = Cursors.Hand,
+            Cursor = Cursors.Default, // Default cursor when disabled
             TextAlign = ContentAlignment.MiddleCenter,
             Enabled = false // Disabled initially
         };
         btnExecuteFromFile.FlatAppearance.BorderSize = 0;
         btnExecuteFromFile.Click += btnExecuteFromFile_Click;
+        btnExecuteFromFile.EnabledChanged += UpdateCommitButtonAppearance;
 
         // Progress Bar
         progressBar = new ProgressBar
         {
-            Location = new Point(820, 390),
+            Location = new Point(820, 447),
             Size = new Size(220, 25),
             Style = ProgressBarStyle.Marquee,
             MarqueeAnimationSpeed = 30,
             Visible = false
         };
 
-        // Results Section Header - tăng khoảng cách
+        // Results Section Header - positioned after buttons
         var lblResults = new Label
         {
             Text = "Results:",
-            Location = new Point(20, 420),
-            Size = new Size(200, 42),
+            Location = new Point(20, 495),
+            Size = new Size(200, 30),
             Font = new Font("Segoe UI", 11F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.FromArgb(33, 33, 33)
         };
 
-        // DataGridView - điều chỉnh vị trí để không bị che
+        // DataGridView - positioned with proper spacing from Results header
         dataGridView = new DataGridView
         {
-            Location = new Point(20, 475),
-            Size = new Size(1090, 200),
+            Location = new Point(20, 530),
+            Size = new Size(1090, 140),
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
             AllowUserToAddRows = false,
             AllowUserToDeleteRows = false,
@@ -241,11 +248,50 @@ public partial class MainForm : Form
         {
             Text = "Generated: 0 records | Total time: 0 seconds",
             Location = new Point(20, 730),
-            Size = new Size(1080, 30),
+            Size = new Size(500, 30),
             Font = new Font("Segoe UI", 9F, FontStyle.Regular),
             ForeColor = Color.FromArgb(102, 102, 102),
-            Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            Anchor = AnchorStyles.Bottom | AnchorStyles.Left
         };
+
+        // API Status Controls - positioned between SQL editor and Records section
+        lblApiModel = new Label
+        {
+            Text = "🤖 AI Model: Initializing...",
+            Location = new Point(20, 375),
+            Size = new Size(200, 40),
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Regular),
+            ForeColor = Color.FromArgb(33, 150, 243),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left
+        };
+
+        lblApiStatus = new Label
+        {
+            Text = "🔄 Status: Ready",
+            Location = new Point(230, 375),
+            Size = new Size(150, 40),
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Regular),
+            ForeColor = Color.FromArgb(76, 175, 80),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left
+        };
+
+        lblDailyUsage = new Label
+        {
+            Text = "📊 Daily: 0/100",
+            Location = new Point(390, 375),
+            Size = new Size(120, 40),
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Regular),
+            ForeColor = Color.FromArgb(102, 102, 102),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left
+        };
+
+        // Timer for updating API status
+        apiStatusTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 2000, // Update every 2 seconds
+            Enabled = false
+        };
+        apiStatusTimer.Tick += UpdateApiStatus;
 
         // Add all controls to form
         this.Controls.AddRange(new Control[]
@@ -255,13 +301,14 @@ public partial class MainForm : Form
             lblSqlQuery, sqlEditor,
             lblRecords, numRecords, btnGenerateData, btnRunQuery, btnExecuteFromFile, progressBar,
             lblResults, dataGridView, 
-            lblStatus, lblGenerateStats
+            lblStatus, lblGenerateStats,
+            lblApiModel, lblApiStatus, lblDailyUsage
         });
 
         this.Load += MainForm_Load;
     }
 
-    private void MainForm_Load(object sender, EventArgs e)
+    private void MainForm_Load(object? sender, EventArgs e)
     {
         LoadSettings();
         UpdateConnectionStringTemplate();
@@ -270,6 +317,10 @@ public partial class MainForm : Form
         // Chỉ hiển thị message sẵn sàng
         lblStatus.Text = "Ready - Select database type and click Test Connection to begin";
         lblStatus.ForeColor = Color.FromArgb(102, 102, 102);
+        
+        // Start API status monitoring
+        apiStatusTimer.Start();
+        UpdateApiStatus(null, EventArgs.Empty);
     }
 
     private void InitializeEngineService()
@@ -290,6 +341,12 @@ public partial class MainForm : Form
                 var index = cboDbType.Items.IndexOf(settings.DatabaseType);
                 if (index >= 0) cboDbType.SelectedIndex = index;
             }
+            else
+            {
+                // Default to MySQL if no saved database type
+                var mysqlIndex = cboDbType.Items.IndexOf("MySQL");
+                if (mysqlIndex >= 0) cboDbType.SelectedIndex = mysqlIndex;
+            }
             
             if (!string.IsNullOrEmpty(settings.ConnectionString))
                 txtConnectionString.Text = settings.ConnectionString;
@@ -298,6 +355,12 @@ public partial class MainForm : Form
                 sqlEditor.Text = settings.LastQuery;
                 
             numRecords.Value = Math.Max(1, Math.Min(1000, settings.DefaultRecordCount));
+        }
+        else
+        {
+            // No settings found - set MySQL as default
+            var mysqlIndex = cboDbType.Items.IndexOf("MySQL");
+            if (mysqlIndex >= 0) cboDbType.SelectedIndex = mysqlIndex;
         }
     }
 
@@ -315,21 +378,44 @@ public partial class MainForm : Form
 
     private void UpdateConnectionStringTemplate()
     {
-        // Chỉ cập nhật nếu chưa có kết nối tùy chỉnh
-        if (string.IsNullOrWhiteSpace(txtConnectionString.Text) || 
-            txtConnectionString.Text.Contains("Server=.;Database=TestDB") ||
-            txtConnectionString.Text.Contains("Server=localhost") ||
-            txtConnectionString.Text.Contains("Server=192.84.20.226") ||
-            txtConnectionString.Text.Contains("Host=localhost") ||
-            false)
+        // Force update to default MySQL connection for fresh start
+        if (cboDbType.Text == "MySQL")
         {
-            txtConnectionString.Text = cboDbType.Text switch
+            txtConnectionString.Text = "Server=localhost;Port=3306;Database=my_database;Uid=root;Pwd=22092012;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;Connection Lifetime=300;Pooling=true;";
+            sqlEditor.Text = @"  -- Tìm user tên Phương, sinh 1989, công ty VNEXT, vai trò DD, sắp nghỉ việc
+        SELECT u.id, u.username, u.first_name, u.last_name, u.email, u.date_of_birth, u.salary, u.department, u.hire_date, 
+               c.NAME AS company_name, c.code AS company_code, r.NAME AS role_name, r.code AS role_code, ur.expires_at AS role_expires,
+               CASE 
+                   WHEN u.is_active = 0 THEN 'Đã nghỉ việc'
+                   WHEN ur.expires_at IS NOT NULL AND ur.expires_at <= DATE_ADD(NOW(), INTERVAL 30 DAY) THEN 'Sắp hết hạn vai trò'
+                   ELSE 'Đang làm việc'
+               END AS work_status
+        FROM users u
+        INNER JOIN companies c ON u.company_id = c.id
+        INNER JOIN user_roles ur ON u.id = ur.user_id AND ur.is_active = False
+        INNER JOIN roles r ON ur.role_id = r.id
+        WHERE (u.first_name LIKE '%Phương%' OR u.last_name LIKE '%Phương%')
+          AND YEAR(u.date_of_birth) = 1989
+          AND c.NAME LIKE '%HOME%'
+          AND r.code LIKE '%member%'
+          AND (u.is_active = 0 OR ur.expires_at <= DATE_ADD(NOW(), INTERVAL 60 DAY))
+        ORDER BY ur.expires_at ASC, u.created_at DESC";
+        }
+        else
+        {
+            // Chỉ cập nhật nếu chưa có kết nối tùy chỉnh cho other database types
+            if (string.IsNullOrWhiteSpace(txtConnectionString.Text) || 
+                txtConnectionString.Text.Contains("Server=.;Database=TestDB") ||
+                txtConnectionString.Text.Contains("Host=localhost") ||
+                false)
             {
-                "SQL Server" => "Server=localhost;Database=TestDB;User Id=sa;Password=yourpassword;TrustServerCertificate=true;",
-                "MySQL" => "Server=localhost;Port=3306;Database=my_database;Uid=root;Pwd=22092012;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;Connection Lifetime=300;Pooling=true;",
-                "PostgreSQL" => "Host=localhost;Port=5432;Database=testdb;Username=postgres;Password=password;",
-                _ => txtConnectionString.Text
-            };
+                txtConnectionString.Text = cboDbType.Text switch
+                {
+                    "SQL Server" => "Server=localhost;Database=TestDB;User Id=sa;Password=yourpassword;TrustServerCertificate=true;",
+                    "PostgreSQL" => "Host=localhost;Port=5432;Database=testdb;Username=postgres;Password=password;",
+                    _ => txtConnectionString.Text
+                };
+            }
         }
     }
 
@@ -365,6 +451,10 @@ public partial class MainForm : Form
                     await testConnection.OpenAsync();
                     Console.WriteLine("Basic MySQL connection successful");
                     
+                                    // Connection successful - no hardcoded table creation
+                // Let AI analyze the SQL query and work with existing schema or create appropriate tables
+                lblStatus.Text = "✅ MySQL connection successful!";
+                lblStatus.ForeColor = Color.Green;
                 }
                 catch (Exception mysqlEx)
                 {
@@ -404,163 +494,6 @@ public partial class MainForm : Form
         finally
         {
             btnTestConnection.Enabled = true;
-        }
-    }
-
-
-
-    private async Task CreateSampleMySQLTables()
-    {
-        try
-        {
-            using var connection = new MySqlConnection(txtConnectionString.Text);
-            await connection.OpenAsync();
-
-            lblStatus.Text = "📦 Creating MySQL tables: companies, roles, users...";
-            lblStatus.ForeColor = Color.Blue;
-            Application.DoEvents();
-
-            // 1. Companies table
-            var createCompaniesTable = @"
-                CREATE TABLE IF NOT EXISTS companies (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    code VARCHAR(50) UNIQUE NOT NULL,
-                    address TEXT,
-                    phone VARCHAR(20),
-                    email VARCHAR(255),
-                    industry VARCHAR(100),
-                    employee_count INT DEFAULT 0,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )";
-
-            // 2. Roles table
-            var createRolesTable = @"
-                CREATE TABLE IF NOT EXISTS roles (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    name VARCHAR(100) NOT NULL UNIQUE,
-                    code VARCHAR(50) NOT NULL UNIQUE,
-                    description TEXT,
-                    level INT DEFAULT 1,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )";
-
-            // 3. Users table
-            var createUsersTable = @"
-                CREATE TABLE IF NOT EXISTS users (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    username VARCHAR(100) NOT NULL UNIQUE,
-                    email VARCHAR(255) NOT NULL UNIQUE,
-                    password_hash VARCHAR(255) NOT NULL DEFAULT 'temp_hash',
-                    first_name VARCHAR(100) NOT NULL,
-                    last_name VARCHAR(100) NOT NULL,
-                    phone VARCHAR(20),
-                    date_of_birth DATE,
-                    gender ENUM('Male', 'Female', 'Other'),
-                    company_id INT,
-                    primary_role_id INT,
-                    salary DECIMAL(15,2),
-                    department VARCHAR(100),
-                    hire_date DATE,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
-                    FOREIGN KEY (primary_role_id) REFERENCES roles(id) ON DELETE SET NULL
-                )";
-
-            // 4. User_roles table
-            var createUserRolesTable = @"
-                CREATE TABLE IF NOT EXISTS user_roles (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id INT NOT NULL,
-                    role_id INT NOT NULL,
-                    assigned_by INT,
-                    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    expires_at TIMESTAMP NULL,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-                    FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL,
-                    UNIQUE KEY unique_user_role (user_id, role_id)
-                )";
-
-            // Execute table creation
-            using var cmd1 = new MySqlCommand(createCompaniesTable, connection);
-            await cmd1.ExecuteNonQueryAsync();
-
-            using var cmd2 = new MySqlCommand(createRolesTable, connection);
-            await cmd2.ExecuteNonQueryAsync();
-
-            using var cmd3 = new MySqlCommand(createUsersTable, connection);
-            await cmd3.ExecuteNonQueryAsync();
-
-            using var cmd3b = new MySqlCommand(createUserRolesTable, connection);
-            await cmd3b.ExecuteNonQueryAsync();
-
-            // Insert sample data
-            lblStatus.Text = "📦 Inserting sample data...";
-            lblStatus.ForeColor = Color.Blue;
-            Application.DoEvents();
-
-            // Sample companies
-            var insertCompanies = @"
-                INSERT IGNORE INTO companies (name, code, industry, employee_count) VALUES
-                ('Tech Solutions Inc', 'TSI001', 'Technology', 150),
-                ('Global Consulting Ltd', 'GCL002', 'Consulting', 75),
-                ('Innovation Labs', 'IL003', 'Research', 200),
-                ('VNEXT Software', 'VNEXT001', 'Software Development', 300),
-                ('VNEXT Solutions', 'VNEXT002', 'IT Solutions', 120)";
-
-            // Sample roles
-            var insertRoles = @"
-                INSERT IGNORE INTO roles (name, code, description, level) VALUES
-                ('Super Admin', 'SUPER_ADMIN', 'Full system access', 10),
-                ('Manager', 'MANAGER', 'Team management', 6),
-                ('Developer', 'DEVELOPER', 'Software development', 3),
-                ('Junior Developer', 'JUNIOR_DEV', 'Entry-level development', 2),
-                ('Digital Director', 'DD', 'Digital transformation leader', 8),
-                ('Data Director', 'DD_DATA', 'Data strategy director', 8),
-                ('Design Director', 'DD_DESIGN', 'Design strategy director', 7)";
-
-            // Sample users
-            var insertUsers = @"
-                INSERT IGNORE INTO users (username, email, first_name, last_name, date_of_birth, company_id, primary_role_id, salary, department, hire_date, is_active) VALUES
-                ('john.doe', 'john.doe@techsolutions.com', 'John', 'Doe', '1985-03-15', 1, 1, 120000.00, 'Engineering', '2020-01-15', 1),
-                ('jane.smith', 'jane.smith@techsolutions.com', 'Jane', 'Smith', '1988-07-22', 1, 2, 95000.00, 'Engineering', '2019-03-10', 1),
-                ('phuong.nguyen', 'phuong.nguyen@vnext.com', 'Phương', 'Nguyễn', '1989-05-20', 4, 5, 150000.00, 'Digital', '2018-06-01', 1),
-                ('phuong.tran', 'phuong.tran@vnext.com', 'Minh', 'Phương', '1989-11-12', 5, 5, 145000.00, 'Strategy', '2017-09-15', 0),
-                ('mike.johnson', 'mike.johnson@globalconsulting.com', 'Mike', 'Johnson', '1990-11-08', 2, 3, 85000.00, 'Development', '2021-02-20', 1)";
-
-            using var cmd4 = new MySqlCommand(insertCompanies, connection);
-            await cmd4.ExecuteNonQueryAsync();
-
-            using var cmd5 = new MySqlCommand(insertRoles, connection);
-            await cmd5.ExecuteNonQueryAsync();
-
-            using var cmd6 = new MySqlCommand(insertUsers, connection);
-            await cmd6.ExecuteNonQueryAsync();
-
-            // Insert user roles with expiration dates
-            var insertUserRoles = @"
-                INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by, expires_at, is_active) VALUES
-                (3, 5, 1, DATE_ADD(NOW(), INTERVAL 15 DAY), 1),  -- Phương Nguyễn - DD role expires in 15 days
-                (4, 5, 1, DATE_ADD(NOW(), INTERVAL -5 DAY), 0),  -- Minh Phương - DD role expired 5 days ago
-                (1, 1, 1, NULL, 1),  -- John Doe - Super Admin (no expiration)
-                (2, 2, 1, NULL, 1)   -- Jane Smith - Manager (no expiration)
-                ";
-
-            using var cmd7 = new MySqlCommand(insertUserRoles, connection);
-            await cmd7.ExecuteNonQueryAsync();
-
-            lblStatus.Text = "✅ MySQL tables created successfully: companies, roles, users with sample data including VNEXT employees";
-            lblStatus.ForeColor = Color.Green;
-        }
-        catch (Exception ex)
-        {
-            lblStatus.Text = $"❌ Failed to create MySQL tables: {ex.Message}";
-            lblStatus.ForeColor = Color.Red;
         }
     }
 
@@ -1031,37 +964,93 @@ public partial class MainForm : Form
             using var transaction = connection.BeginTransaction();
             try
             {
+                // For MySQL, ensure foreign key checks are disabled during execution
+                if (cboDbType.Text.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
+                {
+                    await connection.ExecuteAsync("SET FOREIGN_KEY_CHECKS = 0;", transaction: transaction, commandTimeout: 300);
+                    Console.WriteLine($"[MainForm] Disabled foreign key checks for MySQL");
+                }
+
                 int executedCount = 0;
+                var tableInsertCounts = new Dictionary<string, int>();
+                
                 foreach (var sqlStatement in sqlStatements)
                 {
                     if (string.IsNullOrWhiteSpace(sqlStatement)) continue;
+                    
+                    // Skip foreign key check statements if they're already in the file to avoid duplication
+                    var trimmedStatement = sqlStatement.Trim();
+                    if (trimmedStatement.StartsWith("SET FOREIGN_KEY_CHECKS", StringComparison.OrdinalIgnoreCase) ||
+                        trimmedStatement.StartsWith("-- "))
+                    {
+                        continue;
+                    }
+                    
+                    // Extract table name from INSERT statement for counting
+                    if (trimmedStatement.StartsWith("INSERT INTO", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var tableName = ExtractTableNameFromInsert(trimmedStatement);
+                        if (!string.IsNullOrEmpty(tableName))
+                        {
+                            tableInsertCounts[tableName] = tableInsertCounts.GetValueOrDefault(tableName, 0) + 1;
+                        }
+                    }
                     
                     Console.WriteLine($"[MainForm] Executing: {sqlStatement.Substring(0, Math.Min(100, sqlStatement.Length))}...");
                     await connection.ExecuteAsync(sqlStatement, transaction: transaction, commandTimeout: 300);
                     executedCount++;
                 }
 
+                // Re-enable foreign key checks for MySQL before committing
+                if (cboDbType.Text.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
+                {
+                    await connection.ExecuteAsync("SET FOREIGN_KEY_CHECKS = 1;", transaction: transaction, commandTimeout: 300);
+                    Console.WriteLine($"[MainForm] Re-enabled foreign key checks for MySQL");
+                }
+
                 // Commit transaction
                 transaction.Commit();
                 Console.WriteLine($"[MainForm] Successfully executed and committed {executedCount} SQL statements");
 
-                // Run the original query to show results
+                // Run the original query to verify results  
+                lblStatus.Text = "🔍 Verifying data by running original query...";
+                lblStatus.ForeColor = Color.Blue;
+                Application.DoEvents();
+                
                 var queryResult = await connection.QueryAsync(sqlEditor.Text, commandTimeout: 300);
                 var resultTable = CreateDataTableFromDynamic(queryResult);
                 dataGridView.DataSource = resultTable;
 
-                lblStatus.Text = $"✅ Committed {executedCount} SQL statements successfully! Query returned {resultTable.Rows.Count} rows";
+                lblStatus.Text = $"✅ Committed {executedCount} SQL statements successfully! Verification: {resultTable.Rows.Count} matching records found";
                 lblStatus.ForeColor = Color.Green;
 
-                lblGenerateStats.Text = $"✅ SQL Committed: {executedCount} statements | Result: {resultTable.Rows.Count} rows | Data saved permanently";
+                lblGenerateStats.Text = $"✅ SQL Committed: {executedCount} statements | Verification query: {resultTable.Rows.Count} records found | Data permanently saved";
 
-                // Show success message
+                // Build detailed insert breakdown
+                var insertBreakdown = "";
+                if (tableInsertCounts.Any())
+                {
+                    insertBreakdown = "\n📊 Chi tiết INSERT theo table:\n";
+                    foreach (var kvp in tableInsertCounts.OrderBy(x => x.Key))
+                    {
+                        insertBreakdown += $"   • {kvp.Key}: {kvp.Value} record(s)\n";
+                    }
+                    insertBreakdown += "\n";
+                }
+
+                // Show success message with detailed table breakdown
                 var successMessage = $"🎉 Execute SQL File thành công!\n\n" +
+                                   $"💾 COMMIT DETAILS:\n" +
                                    $"• Đã thực thi {executedCount} câu lệnh SQL từ file\n" +
                                    $"• File: {Path.GetFileName(_lastGeneratedSqlFilePath)}\n" +
-                                   $"• Kết quả truy vấn: {resultTable.Rows.Count} dòng\n" +
+                                   insertBreakdown +
+                                   $"🔍 VERIFICATION RESULTS:\n" +
+                                   $"• Chạy lại câu query gốc: {resultTable.Rows.Count} records found\n" +
                                    $"• Trạng thái: Dữ liệu đã được LÂN VÀO DATABASE\n\n" +
-                                   $"✅ Tất cả dữ liệu đã được lưu vào database thật!";
+                                   $"✅ Tất cả dữ liệu đã được lưu vào database thật!\n" +
+                                   $"✅ Query verification cho thấy {resultTable.Rows.Count} matching records!\n\n" +
+                                   $"💾 Button Commit sẽ được DISABLE vì data đã commit xong.\n" +
+                                   $"🔄 Để commit tiếp, hãy Generate data mới!";
 
                 MessageBox.Show(successMessage, "Execute SQL File Successful", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -1088,16 +1077,182 @@ public partial class MainForm : Form
         }
         finally
         {
-            btnExecuteFromFile.Enabled = true;
+            // After successful commit, clear the file path so button becomes disabled
+            _lastGeneratedSqlFilePath = string.Empty;
+            
+            // Re-enable other buttons
             btnGenerateData.Enabled = true;
             btnRunQuery.Enabled = true;
             progressBar.Visible = false;
+            
+            // Update commit button state based on file availability
+            btnExecuteFromFile.Enabled = !string.IsNullOrEmpty(_lastGeneratedSqlFilePath);
         }
+    }
+
+    /// <summary>
+    /// Update Commit button appearance based on enabled state
+    /// </summary>
+    private void UpdateCommitButtonAppearance(object? sender, EventArgs e)
+    {
+        if (btnExecuteFromFile.Enabled)
+        {
+            // Enabled state: Green background, hand cursor
+            btnExecuteFromFile.BackColor = Color.FromArgb(76, 175, 80); // Green
+            btnExecuteFromFile.ForeColor = Color.White;
+            btnExecuteFromFile.Cursor = Cursors.Hand;
+            btnExecuteFromFile.Text = "💾 Commit";
+        }
+        else
+        {
+            // Disabled state: Gray background, default cursor
+            btnExecuteFromFile.BackColor = Color.Gray;
+            btnExecuteFromFile.ForeColor = Color.LightGray;
+            btnExecuteFromFile.Cursor = Cursors.Default;
+            btnExecuteFromFile.Text = "💾 Commit (No File)";
+        }
+    }
+
+    /// <summary>
+    /// Update API status display with current model and usage information
+    /// </summary>
+    private void UpdateApiStatus(object? sender, EventArgs e)
+    {
+        try
+        {
+            // Access actual Gemini Flash rotation service
+            var rotationService = _engineService?.DataGenService?.GeminiAIService?.FlashRotationService;
+            
+            if (rotationService != null)
+            {
+                // Get current model name and clean it for display
+                var currentModelName = rotationService.GetCurrentModelName();
+                var displayName = GetModelDisplayName(currentModelName);
+                lblApiModel.Text = $"🤖 {displayName}";
+                lblApiModel.ForeColor = Color.FromArgb(33, 150, 243);
+                
+                // Get daily usage statistics
+                var apiStats = rotationService.GetAPIUsageStatistics();
+                var dailyUsed = apiStats.ContainsKey("DailyCallsUsed") ? apiStats["DailyCallsUsed"] : 0;
+                var dailyLimit = apiStats.ContainsKey("DailyCallLimit") ? apiStats["DailyCallLimit"] : 100;
+                lblDailyUsage.Text = $"📊 Daily: {dailyUsed}/{dailyLimit}";
+                lblDailyUsage.ForeColor = Color.FromArgb(102, 102, 102);
+                
+                // Check if API is available
+                var canCall = rotationService.CanCallAPINow();
+                if (canCall)
+                {
+                    lblApiStatus.Text = "🟢 Ready";
+                    lblApiStatus.ForeColor = Color.FromArgb(76, 175, 80);
+                }
+                else
+                {
+                    lblApiStatus.Text = "⏳ Rate Limited";
+                    lblApiStatus.ForeColor = Color.FromArgb(255, 152, 0);
+                }
+            }
+            else
+            {
+                // Fallback display when service not initialized
+                lblApiModel.Text = "🤖 Initializing...";
+                lblApiModel.ForeColor = Color.FromArgb(102, 102, 102);
+                
+                lblApiStatus.Text = "🔄 Loading";
+                lblApiStatus.ForeColor = Color.FromArgb(102, 102, 102);
+                
+                lblDailyUsage.Text = "📊 Daily: --/--";
+                lblDailyUsage.ForeColor = Color.FromArgb(102, 102, 102);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Silent error handling for UI updates
+            Console.WriteLine($"Error updating API status: {ex.Message}");
+            
+            lblApiModel.Text = "🤖 Error";
+            lblApiModel.ForeColor = Color.FromArgb(244, 67, 54);
+            
+            lblApiStatus.Text = "❌ Error";
+            lblApiStatus.ForeColor = Color.FromArgb(244, 67, 54);
+            
+            lblDailyUsage.Text = "📊 --/--";
+            lblDailyUsage.ForeColor = Color.FromArgb(244, 67, 54);
+        }
+    }
+    
+    /// <summary>
+    /// Get display-friendly model name with specific version info
+    /// </summary>
+    private static string GetModelDisplayName(string fullModelName)
+    {
+        if (string.IsNullOrEmpty(fullModelName))
+            return "No Model";
+            
+        // Extract specific version information from full model name
+        return fullModelName switch
+        {
+            // Gemini 2.5 Flash
+            var name when name.Contains("gemini-2.5-flash") => "2.5 Flash",
+            
+            // Gemini 2.0 Flash variations
+            var name when name.Contains("gemini-2.0-flash-lite") => "2.0 Flash Lite",
+            var name when name.Contains("gemini-2.0-flash-exp") => "2.0 Flash Exp",
+            var name when name.Contains("gemini-2.0-flash") => "2.0 Flash",
+            
+            // Gemini 1.5 Flash variations  
+            var name when name.Contains("gemini-1.5-flash-8b") => "1.5 Flash 8B",
+            var name when name.Contains("gemini-1.5-flash-latest") => "1.5 Flash Latest",
+            var name when name.Contains("gemini-1.5-flash") => "1.5 Flash",
+            
+            // Generic fallbacks
+            var name when name.Contains("flash") => "Flash Model",
+            var name when name.Contains("pro") => "Pro Model",
+            var name when name.Contains("gemini") => "Gemini AI",
+            
+            // Unknown models
+            _ => fullModelName.Length > 15 ? fullModelName.Substring(0, 12) + "..." : fullModelName
+        };
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        apiStatusTimer?.Stop();
         SaveSettings();
         base.OnFormClosing(e);
+    }
+
+    /// <summary>
+    /// Extract table name from INSERT statement for detailed commit reporting
+    /// </summary>
+    private static string ExtractTableNameFromInsert(string insertStatement)
+    {
+        try
+        {
+            // Pattern: INSERT INTO table_name (...) VALUES (...)
+            var match = System.Text.RegularExpressions.Regex.Match(insertStatement, 
+                @"INSERT\s+INTO\s+[`'""]?([a-zA-Z_][a-zA-Z0-9_]*)[`'""]?\s*\(", 
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            
+            if (match.Success)
+            {
+                return match.Groups[1].Value;
+            }
+            
+            // Alternative pattern: INSERT INTO table_name VALUES (...)
+            match = System.Text.RegularExpressions.Regex.Match(insertStatement, 
+                @"INSERT\s+INTO\s+[`'""]?([a-zA-Z_][a-zA-Z0-9_]*)[`'""]?\s+VALUES", 
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            
+            if (match.Success)
+            {
+                return match.Groups[1].Value;
+            }
+        }
+        catch
+        {
+            // If regex fails, fall back to simple parsing
+        }
+        
+        return string.Empty;
     }
 }

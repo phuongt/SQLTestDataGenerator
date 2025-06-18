@@ -56,7 +56,7 @@ public class CommonInsertBuilder
         var columns = string.Join(", ", filteredRecord.Select(kvp => QuoteIdentifier(kvp.Key, databaseType)));
         var values = string.Join(", ", filteredRecord.Select(kvp => FormatValue(kvp.Value)));
         
-        var sql = $"INSERT INTO {QuoteIdentifier(tableName, databaseType)} ({columns}) VALUES ({values})";
+        var sql = $"INSERT INTO {QuoteIdentifier(tableName, databaseType)} ({columns}) VALUES ({values});";
         
         _logger.Debug("Generated INSERT: {SQL}", sql.Substring(0, Math.Min(200, sql.Length)) + "...");
         
@@ -86,7 +86,7 @@ public class CommonInsertBuilder
         }
 
         var columnNames = columns.Select(c => QuoteIdentifier(c.ColumnName, databaseType));
-        var sql = $"INSERT INTO {QuoteIdentifier(tableName, databaseType)} ({string.Join(", ", columnNames)}) VALUES ({string.Join(", ", columnValues)})";
+        var sql = $"INSERT INTO {QuoteIdentifier(tableName, databaseType)} ({string.Join(", ", columnNames)}) VALUES ({string.Join(", ", columnValues)});";
         
         _logger.Debug("Generated INSERT: {SQL}", sql.Substring(0, Math.Min(200, sql.Length)) + "...");
         
@@ -198,5 +198,68 @@ public class CommonInsertBuilder
 
         _logger.Debug("INSERT statement validation passed - no generated columns found");
         return true;
+    }
+
+    /// <summary>
+    /// Build INSERT statement WITH ID columns included for SQL file export
+    /// This includes auto-increment/identity columns with sequential values (1,2,3,...)
+    /// Used specifically for file export to ensure FK references work correctly
+    /// </summary>
+    public string BuildInsertStatementWithIds(
+        string tableName,
+        Dictionary<string, object> record, 
+        TableSchema tableSchema,
+        DatabaseType databaseType,
+        int recordIndex) // 0-based index, will be converted to 1-based ID
+    {
+        _logger.Information("Building INSERT WITH IDs for export - table {TableName} record #{RecordIndex}", 
+            tableName, recordIndex + 1);
+
+        // Find ID/Primary Key column
+        var primaryKeyColumn = tableSchema.Columns.FirstOrDefault(c => c.IsPrimaryKey && c.IsIdentity);
+        
+        // Create record copy and add ID if found
+        var recordWithId = new Dictionary<string, object>(record);
+        if (primaryKeyColumn != null)
+        {
+            var idValue = recordIndex + 1; // Convert 0-based to 1-based ID
+            recordWithId[primaryKeyColumn.ColumnName] = idValue;
+            
+            _logger.Information("Added ID column {IdColumn} = {IdValue} for table {TableName}", 
+                primaryKeyColumn.ColumnName, idValue, tableName);
+        }
+
+        // For export, only exclude generated columns (NOT identity columns)
+        var excludedColumns = tableSchema.Columns
+            .Where(c => c.IsGenerated && !c.IsIdentity) // Keep Identity, exclude only Generated
+            .Select(c => c.ColumnName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (excludedColumns.Any())
+        {
+            _logger.Information("Export mode - Excluding {ExcludedCount} generated columns: {ExcludedColumns}", 
+                excludedColumns.Count, string.Join(", ", excludedColumns));
+        }
+
+        // Filter record to exclude only generated columns  
+        var filteredRecord = recordWithId.Where(kvp => !excludedColumns.Contains(kvp.Key)).ToList();
+        
+        if (filteredRecord.Count == 0)
+        {
+            throw new InvalidOperationException($"No columns left to insert after filtering for table {tableName}");
+        }
+
+        _logger.Information("Export filtered to {FilteredCount} columns for table {TableName} (ID included)", 
+            filteredRecord.Count, tableName);
+
+        // Build SQL statement
+        var columns = string.Join(", ", filteredRecord.Select(kvp => QuoteIdentifier(kvp.Key, databaseType)));
+        var values = string.Join(", ", filteredRecord.Select(kvp => FormatValue(kvp.Value)));
+        
+        var sql = $"INSERT INTO {QuoteIdentifier(tableName, databaseType)} ({columns}) VALUES ({values});";
+        
+        _logger.Debug("Generated INSERT with ID: {SQL}", sql.Substring(0, Math.Min(200, sql.Length)) + "...");
+        
+        return sql;
     }
 } 

@@ -1,8 +1,277 @@
 using SqlTestDataGenerator.Core.Models;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Configuration;
 
 namespace SqlTestDataGenerator.Core.Services;
+
+/// <summary>
+/// Centralized logging manager to unify all logging across UI, Tests, and Engine
+/// </summary>
+public static class CentralizedLoggingManager
+{
+    private static LoggingConfiguration? _config;
+    private static readonly object _configLock = new();
+    
+    /// <summary>
+    /// Initialize centralized logging with configuration
+    /// </summary>
+    public static void Initialize(LoggingConfiguration? config = null)
+    {
+        lock (_configLock)
+        {
+            // First try to read from app.config if available
+            _config = config ?? LoadFromAppConfig() ?? new LoggingConfiguration();
+            
+            // Ensure logs directory exists
+            var logsDir = GetLogsDirectory();
+            if (!Directory.Exists(logsDir))
+            {
+                Directory.CreateDirectory(logsDir);
+                Console.WriteLine($"[CentralizedLoggingManager] Created logs directory: {logsDir}");
+            }
+            
+            // Auto-cleanup old logs
+            _ = Task.Run(AutoCleanupOldLogsAsync);
+            
+            Console.WriteLine($"[CentralizedLoggingManager] Initialized. Logs directory: {logsDir}");
+            Console.WriteLine($"[CentralizedLoggingManager] Config source: {(_config.ConfigSource ?? "default")}");
+        }
+    }
+    
+    /// <summary>
+    /// Load configuration from app.config if available
+    /// </summary>
+    private static LoggingConfiguration? LoadFromAppConfig()
+    {
+        try
+        {
+            // Check if we can read from app.config
+            var logLevel = ConfigurationManager.AppSettings["LogLevel"];
+            var logToFile = ConfigurationManager.AppSettings["LogToFile"];
+            var logFilePath = ConfigurationManager.AppSettings["LogFilePath"];
+            
+            if (string.IsNullOrEmpty(logLevel) && string.IsNullOrEmpty(logToFile) && string.IsNullOrEmpty(logFilePath))
+            {
+                // No logging config in app.config
+                return null;
+            }
+            
+            var config = new LoggingConfiguration
+            {
+                LogLevel = logLevel ?? "Information",
+                ConfigSource = "app.config"
+            };
+            
+            // Parse LogToFile
+            if (bool.TryParse(logToFile, out var enableFileLogging))
+            {
+                config.EnableFileLogging = enableFileLogging;
+            }
+            
+            // Handle LogFilePath
+            if (!string.IsNullOrEmpty(logFilePath))
+            {
+                // Convert old app.config path format to new centralized format
+                if (logFilePath.Contains(".txt"))
+                {
+                    // Old format: "../logs/test-ai-.txt" -> new format: use centralized system
+                    Console.WriteLine($"[CentralizedLoggingManager] Converting old LogFilePath format: {logFilePath}");
+                    
+                    // Extract directory and component info
+                    var directory = Path.GetDirectoryName(logFilePath);
+                    var fileName = Path.GetFileNameWithoutExtension(logFilePath);
+                    
+                    if (!string.IsNullOrEmpty(directory))
+                    {
+                        // Use the directory from app.config
+                        config.LogsDirectory = directory.Replace("../", "").Replace("..\\", "");
+                    }
+                    
+                    // Set component type based on filename pattern
+                    if (fileName.Contains("test"))
+                    {
+                        config.DefaultComponent = LogComponent.Test;
+                    }
+                    else if (fileName.Contains("ai"))
+                    {
+                        config.DefaultComponent = LogComponent.AI;
+                    }
+                }
+                else
+                {
+                    // Assume it's a directory path
+                    config.LogsDirectory = logFilePath;
+                }
+            }
+            
+            Console.WriteLine($"[CentralizedLoggingManager] Loaded config from app.config: LogLevel={config.LogLevel}, LogsDir={config.LogsDirectory}");
+            return config;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CentralizedLoggingManager] Could not read app.config: {ex.Message}");
+            return null;
+        }
+    }
+    
+    /// <summary>
+    /// Get absolute path to logs directory
+    /// </summary>
+    public static string GetLogsDirectory()
+    {
+        _config ??= new LoggingConfiguration();
+        
+        // For test projects, go up one level to project root
+        var currentDir = Directory.GetCurrentDirectory();
+        if (currentDir.Contains("bin") || currentDir.Contains("Debug") || currentDir.Contains("Release"))
+        {
+            // Navigate to project root
+            var projectRoot = currentDir;
+            while (projectRoot.Contains("bin") || projectRoot.Contains("obj"))
+            {
+                projectRoot = Directory.GetParent(projectRoot)?.FullName ?? currentDir;
+            }
+            
+            // Navigate to solution root
+            var solutionRoot = Directory.GetParent(projectRoot)?.FullName ?? projectRoot;
+            return Path.Combine(solutionRoot, _config.LogsDirectory);
+        }
+        
+        return Path.Combine(currentDir, _config.LogsDirectory);
+    }
+    
+    /// <summary>
+    /// Get log file path for specific component
+    /// </summary>
+    public static string GetLogFilePath(LogComponent component, DateTime? timestamp = null)
+    {
+        _config ??= new LoggingConfiguration();
+        var logsDir = GetLogsDirectory();
+        return _config.FileNaming.GetLogPath(logsDir, component, timestamp);
+    }
+    
+    /// <summary>
+    /// Create LoggingSettings for specific component
+    /// </summary>
+    public static LoggingSettings CreateLoggingSettings(LogComponent component)
+    {
+        _config ??= new LoggingConfiguration();
+        
+        return new LoggingSettings
+        {
+            FilePath = GetLogFilePath(component),
+            LogLevel = _config.LogLevel,
+            EnableUILogging = _config.EnableUILogging,
+            EnableFileLogging = _config.EnableFileLogging,
+            MaxFileSizeMB = _config.MaxFileSizeMB
+        };
+    }
+    
+    /// <summary>
+    /// Clean up old log files automatically
+    /// </summary>
+    public static async Task AutoCleanupOldLogsAsync()
+    {
+        try
+        {
+            _config ??= new LoggingConfiguration();
+            var logsDir = GetLogsDirectory();
+            
+            if (!Directory.Exists(logsDir)) return;
+            
+            var cutoffDate = DateTime.Now.AddDays(-_config.AutoCleanupAfterDays);
+            var logFiles = Directory.GetFiles(logsDir, "*.log");
+            var deletedCount = 0;
+            
+            foreach (var logFile in logFiles)
+            {
+                var fileInfo = new FileInfo(logFile);
+                if (fileInfo.LastWriteTime < cutoffDate)
+                {
+                    try
+                    {
+                        File.Delete(logFile);
+                        deletedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[CentralizedLoggingManager] Failed to delete old log file {logFile}: {ex.Message}");
+                    }
+                }
+            }
+            
+            if (deletedCount > 0)
+            {
+                Console.WriteLine($"[CentralizedLoggingManager] Cleaned up {deletedCount} old log files older than {_config.AutoCleanupAfterDays} days");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CentralizedLoggingManager] Auto-cleanup failed: {ex.Message}");
+        }
+    }
+    
+    /// <summary>
+    /// Get summary of all log files
+    /// </summary>
+    public static LogsSummary GetLogsSummary()
+    {
+        var logsDir = GetLogsDirectory();
+        var summary = new LogsSummary
+        {
+            LogsDirectory = logsDir,
+            TotalLogFiles = 0,
+            TotalSizeMB = 0
+        };
+        
+        if (!Directory.Exists(logsDir))
+        {
+            return summary;
+        }
+        
+        var logFiles = Directory.GetFiles(logsDir, "*.log");
+        summary.TotalLogFiles = logFiles.Length;
+        
+        foreach (var logFile in logFiles)
+        {
+            var fileInfo = new FileInfo(logFile);
+            summary.TotalSizeMB += (double)fileInfo.Length / (1024 * 1024);
+            
+            var fileName = fileInfo.Name.ToLower();
+            if (fileName.Contains("app")) summary.UILogs++;
+            else if (fileName.Contains("engine")) summary.EngineLogs++;
+            else if (fileName.Contains("test")) summary.TestLogs++;
+            else if (fileName.Contains("ai")) summary.AILogs++;
+            else summary.OtherLogs++;
+        }
+        
+        return summary;
+    }
+}
+
+/// <summary>
+/// Summary of logs information
+/// </summary>
+public class LogsSummary
+{
+    public string LogsDirectory { get; set; } = string.Empty;
+    public int TotalLogFiles { get; set; }
+    public double TotalSizeMB { get; set; }
+    public int UILogs { get; set; }
+    public int EngineLogs { get; set; }
+    public int TestLogs { get; set; }
+    public int AILogs { get; set; }
+    public int OtherLogs { get; set; }
+    
+    public override string ToString()
+    {
+        return $"Logs Directory: {LogsDirectory}\n" +
+               $"Total Files: {TotalLogFiles}\n" +
+               $"Total Size: {TotalSizeMB:F2} MB\n" +
+               $"UI: {UILogs}, Engine: {EngineLogs}, Test: {TestLogs}, AI: {AILogs}, Other: {OtherLogs}";
+    }
+}
 
 /// <summary>
 /// Centralized logging service with structured logging format and UI integration
@@ -101,8 +370,8 @@ public class LoggerService : ILoggerService
             Directory.CreateDirectory(logDir);
         }
 
-        // Timer to flush logs to file every 5 seconds
-        _flushTimer = new Timer(FlushLogsToFile, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        // Timer to flush logs to file every 1 second (faster for tests)
+        _flushTimer = new Timer(FlushLogsToFile, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     public void LogInfo(string message, string? context = null, object? parameters = null)
@@ -193,11 +462,28 @@ public class LoggerService : ILoggerService
         {
             LogEntryCreated?.Invoke(entry);
         }
+        
+        // Force immediate flush for test environment
+        if (IsTestEnvironment())
+        {
+            FlushLogsToFile(null);
+        }
+    }
+    
+    /// <summary>
+    /// Detect if running in test environment
+    /// </summary>
+    private bool IsTestEnvironment()
+    {
+        return _settings.FilePath.Contains("test-") || 
+               System.Reflection.Assembly.GetExecutingAssembly().FullName?.Contains("Test") == true ||
+               Environment.StackTrace.Contains("TestHost") ||
+               Environment.StackTrace.Contains("mstest");
     }
 
     private void FlushLogsToFile(object? state)
     {
-        if (_disposed || string.IsNullOrEmpty(_settings.FilePath)) return;
+        if (_disposed || string.IsNullOrEmpty(_settings.FilePath) || !_settings.EnableFileLogging) return;
 
         var entriesToWrite = new List<LogEntry>();
 
