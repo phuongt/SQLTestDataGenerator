@@ -48,6 +48,72 @@ public class DatabaseSettings
     /// Connection timeout in seconds
     /// </summary>
     public int TimeoutSeconds { get; set; } = 120; // Tăng lên 2 phút cho queries phức tạp
+
+    /// <summary>
+    /// SSH tunnel configuration
+    /// </summary>
+    public SshSettings SSH { get; set; } = new();
+}
+
+/// <summary>
+/// SSH tunnel configuration settings
+/// </summary>
+public class SshSettings
+{
+    /// <summary>
+    /// Enable SSH tunneling for database connection
+    /// </summary>
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>
+    /// SSH server hostname or IP address
+    /// </summary>
+    public string Host { get; set; } = "";
+
+    /// <summary>
+    /// SSH server port (default 22)
+    /// </summary>
+    public int Port { get; set; } = 22;
+
+    /// <summary>
+    /// SSH username
+    /// </summary>
+    public string Username { get; set; } = "";
+
+    /// <summary>
+    /// SSH password (for password authentication)
+    /// </summary>
+    public string Password { get; set; } = "";
+
+    /// <summary>
+    /// SSH private key file path (for key authentication)
+    /// </summary>
+    public string PrivateKeyPath { get; set; } = "";
+
+    /// <summary>
+    /// Private key passphrase (if encrypted)
+    /// </summary>
+    public string KeyPassphrase { get; set; } = "";
+
+    /// <summary>
+    /// Authentication method: Password or PrivateKey
+    /// </summary>
+    public string AuthMethod { get; set; } = "Password";
+
+    /// <summary>
+    /// Remote database host (inside SSH network)
+    /// </summary>
+    public string RemoteDbHost { get; set; } = "localhost";
+
+    /// <summary>
+    /// Remote database port (inside SSH network)
+    /// </summary>
+    public int RemoteDbPort { get; set; } = 3306;
+
+    /// <summary>
+    /// Local port for tunnel (0 = auto-assign)
+    /// </summary>
+    public int LocalPort { get; set; } = 0;
 }
 
 /// <summary>

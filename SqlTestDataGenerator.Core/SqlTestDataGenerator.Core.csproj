@@ -29,6 +29,9 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="SqlParserCS" Version="0.6.5" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.1" />
+    
+    <!-- SSH tunneling -->
+    <PackageReference Include="SSH.NET" Version="2023.0.0" />
   </ItemGroup>
 
 </Project>

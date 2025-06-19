@@ -10,6 +10,7 @@ public partial class MainForm : Form
 {
     private EngineService? _engineService;
     private readonly ConfigurationService _configService;
+    private SshTunnelService? _sshTunnelService;
     
     // UI Controls
     private ComboBox cboDbType = null!;
@@ -31,6 +32,18 @@ public partial class MainForm : Form
     private Label lblDailyUsage = null!;
     private System.Windows.Forms.Timer apiStatusTimer = null!;
     
+    // SSH Controls
+    private CheckBox chkUseSSH = null!;
+    private GroupBox grpSSH = null!;
+    private TextBox txtSSHHost = null!;
+    private NumericUpDown numSSHPort = null!;
+    private TextBox txtSSHUsername = null!;
+    private TextBox txtSSHPassword = null!;
+    private TextBox txtRemoteDbHost = null!;
+    private NumericUpDown numRemoteDbPort = null!;
+    private Button btnTestSSH = null!;
+    private Label lblSSHStatus = null!;
+    
     // SQL Export tracking
     private string _lastGeneratedSqlFilePath = string.Empty;
 
@@ -42,10 +55,10 @@ public partial class MainForm : Form
 
     private void InitializeComponent()
     {
-        this.Text = "SQL Test Data Generator (Gemini AI)";
-        this.Size = new Size(1150, 800);
+        this.Text = "SQL Test Data Generator (Gemini AI) - SSH Tunnel Support";
+        this.Size = new Size(1200, 800);
         this.StartPosition = FormStartPosition.CenterScreen;
-        this.MinimumSize = new Size(1100, 750);
+        this.MinimumSize = new Size(1150, 750);
 
         // Database Type
         var lblDbType = new Label
@@ -85,7 +98,7 @@ public partial class MainForm : Form
             Location = new Point(150, 60),
             Size = new Size(550, 80),
             Font = new Font("Consolas", 9F),
-            Text = "Server=.;Database=TestDB;Trusted_Connection=true;TrustServerCertificate=true;"
+            Text = "Server=localhost;Port=3306;Database=my_database;Uid=root;Pwd=password;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;"
         };
 
         btnTestConnection = new Button
@@ -101,6 +114,173 @@ public partial class MainForm : Form
         };
         btnTestConnection.FlatAppearance.BorderSize = 0;
         btnTestConnection.Click += btnTestConnection_Click;
+
+        // SSH Configuration
+        chkUseSSH = new CheckBox
+        {
+            Text = "🔐 Use SSH Tunnel",
+            Location = new Point(870, 65),
+            Size = new Size(150, 25),
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(33, 150, 243)
+        };
+        chkUseSSH.CheckedChanged += chkUseSSH_CheckedChanged;
+
+        grpSSH = new GroupBox
+        {
+            Text = "SSH Tunnel Configuration",
+            Location = new Point(880, 95),
+            Size = new Size(250, 200),
+            Font = new Font("Segoe UI", 9F),
+            Visible = false
+        };
+
+        // SSH Host
+        var lblSSHHost = new Label
+        {
+            Text = "SSH Host:",
+            Location = new Point(10, 25),
+            Size = new Size(70, 20),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH
+        };
+
+        txtSSHHost = new TextBox
+        {
+            Location = new Point(85, 23),
+            Size = new Size(150, 23),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            PlaceholderText = "ssh.server.com"
+        };
+
+        // SSH Port
+        var lblSSHPort = new Label
+        {
+            Text = "SSH Port:",
+            Location = new Point(10, 50),
+            Size = new Size(70, 20),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH
+        };
+
+        numSSHPort = new NumericUpDown
+        {
+            Location = new Point(85, 48),
+            Size = new Size(80, 23),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            Minimum = 1,
+            Maximum = 65535,
+            Value = 22
+        };
+
+        // SSH Username
+        var lblSSHUsername = new Label
+        {
+            Text = "Username:",
+            Location = new Point(10, 75),
+            Size = new Size(70, 20),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH
+        };
+
+        txtSSHUsername = new TextBox
+        {
+            Location = new Point(85, 73),
+            Size = new Size(150, 23),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            PlaceholderText = "ubuntu"
+        };
+
+        // SSH Password
+        var lblSSHPassword = new Label
+        {
+            Text = "Password:",
+            Location = new Point(10, 100),
+            Size = new Size(70, 20),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH
+        };
+
+        txtSSHPassword = new TextBox
+        {
+            Location = new Point(85, 98),
+            Size = new Size(150, 23),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            UseSystemPasswordChar = true,
+            PlaceholderText = "ssh password"
+        };
+
+        // Remote DB Host
+        var lblRemoteDbHost = new Label
+        {
+            Text = "Remote DB:",
+            Location = new Point(10, 125),
+            Size = new Size(70, 20),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH
+        };
+
+        txtRemoteDbHost = new TextBox
+        {
+            Location = new Point(85, 123),
+            Size = new Size(100, 23),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            Text = "localhost",
+            PlaceholderText = "localhost"
+        };
+
+        // Remote DB Port
+        var lblRemoteDbPort = new Label
+        {
+            Text = "Port:",
+            Location = new Point(190, 125),
+            Size = new Size(30, 20),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH
+        };
+
+        numRemoteDbPort = new NumericUpDown
+        {
+            Location = new Point(190, 148),
+            Size = new Size(55, 23),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            Minimum = 1,
+            Maximum = 65535,
+            Value = 3306
+        };
+
+        // Test SSH Button
+        btnTestSSH = new Button
+        {
+            Text = "🧪 Test SSH",
+            Location = new Point(85, 148),
+            Size = new Size(100, 25),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            BackColor = Color.FromArgb(255, 152, 0),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand
+        };
+        btnTestSSH.FlatAppearance.BorderSize = 0;
+        btnTestSSH.Click += btnTestSSH_Click;
+
+        // SSH Status
+        lblSSHStatus = new Label
+        {
+            Text = "SSH: Not connected",
+            Location = new Point(10, 175),
+            Size = new Size(230, 20),
+            Font = new Font("Segoe UI", 8F),
+            Parent = grpSSH,
+            ForeColor = Color.Gray
+        };
 
         // SQL Query
         var lblSqlQuery = new Label
@@ -298,6 +478,7 @@ public partial class MainForm : Form
         {
             lblDbType, cboDbType,
             lblConnection, txtConnectionString, btnTestConnection,
+            chkUseSSH, grpSSH,
             lblSqlQuery, sqlEditor,
             lblRecords, numRecords, btnGenerateData, btnRunQuery, btnExecuteFromFile, progressBar,
             lblResults, dataGridView, 
@@ -438,35 +619,81 @@ public partial class MainForm : Form
             Console.WriteLine($"Testing connection to: {cboDbType.Text}");
             Console.WriteLine($"Connection string: {txtConnectionString.Text}");
 
+            // Check if SSH tunnel should be used
+            string connectionStringToUse = txtConnectionString.Text;
+            
+            if (chkUseSSH.Checked)
+            {
+                if (_sshTunnelService?.IsConnected != true)
+                {
+                    lblStatus.Text = "❌ SSH tunnel not connected! Please test SSH connection first.";
+                    lblStatus.ForeColor = Color.Red;
+                    MessageBox.Show("❌ SSH Tunnel chưa kết nối!\n\nVui lòng:\n1. Configure SSH settings\n2. Click 'Test SSH' để tạo tunnel\n3. Sau đó test database connection", 
+                        "SSH Tunnel Required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                
+                // Use SSH tunnel connection string
+                try
+                {
+                    connectionStringToUse = _sshTunnelService.GetTunnelConnectionString(
+                        DbConnectionFactory.ExtractDatabaseName(txtConnectionString.Text) ?? "my_database",
+                        DbConnectionFactory.ExtractUsername(txtConnectionString.Text) ?? "root", 
+                        DbConnectionFactory.ExtractPassword(txtConnectionString.Text) ?? "password"
+                    );
+                    
+                    lblStatus.Text = $"🔍 Testing connection via SSH tunnel (port {_sshTunnelService.LocalPort})...";
+                    lblStatus.ForeColor = Color.Blue;
+                    Application.DoEvents();
+                }
+                catch (Exception sshEx)
+                {
+                    lblStatus.Text = $"❌ SSH tunnel connection string error: {sshEx.Message}";
+                    lblStatus.ForeColor = Color.Red;
+                    MessageBox.Show($"❌ Lỗi tạo connection string qua SSH:\n\n{sshEx.Message}", 
+                        "SSH Connection String Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+            }
+
             if (cboDbType.Text == "MySQL")
             {
-                lblStatus.Text = "🔍 Testing MySQL connection...";
+                if (!chkUseSSH.Checked)
+                {
+                    lblStatus.Text = "🔍 Testing direct MySQL connection...";
+                }
                 lblStatus.ForeColor = Color.Blue;
                 Application.DoEvents();
                 
                 // Test basic connection first
                 try
                 {
-                    using var testConnection = new MySqlConnection(txtConnectionString.Text);
+                    using var testConnection = new MySqlConnection(connectionStringToUse);
                     await testConnection.OpenAsync();
-                    Console.WriteLine("Basic MySQL connection successful");
                     
-                                    // Connection successful - no hardcoded table creation
-                // Let AI analyze the SQL query and work with existing schema or create appropriate tables
-                lblStatus.Text = "✅ MySQL connection successful!";
-                lblStatus.ForeColor = Color.Green;
+                    var connectionType = chkUseSSH.Checked ? "SSH tunneled" : "direct";
+                    Console.WriteLine($"Basic MySQL {connectionType} connection successful");
+                    
+                    lblStatus.Text = $"✅ MySQL {connectionType} connection successful!";
+                    lblStatus.ForeColor = Color.Green;
                 }
                 catch (Exception mysqlEx)
                 {
-                    lblStatus.Text = $"❌ MySQL Connection Error: {mysqlEx.Message}";
+                    var connectionType = chkUseSSH.Checked ? "SSH tunneled" : "direct";
+                    lblStatus.Text = $"❌ MySQL {connectionType} Connection Error: {mysqlEx.Message}";
                     lblStatus.ForeColor = Color.Red;
-                    MessageBox.Show($"❌ Lỗi kết nối MySQL:\n\n{mysqlEx.Message}\n\nKiểm tra:\n• Server: 192.84.20.226 có online?\n• Port: 3306\n• Username/Password đúng?", 
+                    
+                    var troubleshoot = chkUseSSH.Checked 
+                        ? "• SSH tunnel đang hoạt động?\n• Remote DB host/port đúng?\n• Database credentials đúng?" 
+                        : "• Server có online?\n• Port 3306 mở?\n• Username/Password đúng?";
+                        
+                    MessageBox.Show($"❌ Lỗi kết nối MySQL {connectionType}:\n\n{mysqlEx.Message}\n\nKiểm tra:\n{troubleshoot}", 
                         "MySQL Connection Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
             }
 
-            var success = await _engineService.TestConnectionAsync(cboDbType.Text, txtConnectionString.Text);
+            var success = await _engineService.TestConnectionAsync(cboDbType.Text, connectionStringToUse, _sshTunnelService);
             
             if (success)
             {
@@ -1218,6 +1445,18 @@ public partial class MainForm : Form
     {
         apiStatusTimer?.Stop();
         SaveSettings();
+        
+        // Close SSH tunnel if connected
+        try
+        {
+            _sshTunnelService?.CloseTunnel();
+            _sshTunnelService?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error disposing SSH tunnel: {ex.Message}");
+        }
+        
         base.OnFormClosing(e);
     }
 
@@ -1255,4 +1494,129 @@ public partial class MainForm : Form
         
         return string.Empty;
     }
+
+    #region SSH Tunnel Event Handlers
+
+    /// <summary>
+    /// Handle SSH checkbox change event
+    /// </summary>
+    private void chkUseSSH_CheckedChanged(object? sender, EventArgs e)
+    {
+        grpSSH.Visible = chkUseSSH.Checked;
+        
+        if (chkUseSSH.Checked)
+        {
+            lblStatus.Text = "SSH Tunnel enabled - Configure SSH settings and test connection";
+            lblStatus.ForeColor = Color.FromArgb(33, 150, 243);
+        }
+        else
+        {
+            // Close existing SSH tunnel if any
+            _sshTunnelService?.CloseTunnel();
+            _sshTunnelService?.Dispose();
+            _sshTunnelService = null;
+            
+            lblSSHStatus.Text = "SSH: Not connected";
+            lblSSHStatus.ForeColor = Color.Gray;
+            
+            lblStatus.Text = "SSH Tunnel disabled - Using direct database connection";
+            lblStatus.ForeColor = Color.FromArgb(102, 102, 102);
+        }
+    }
+
+    /// <summary>
+    /// Handle SSH connection test
+    /// </summary>
+    private async void btnTestSSH_Click(object? sender, EventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(txtSSHHost.Text) || 
+            string.IsNullOrWhiteSpace(txtSSHUsername.Text) || 
+            string.IsNullOrWhiteSpace(txtSSHPassword.Text))
+        {
+            MessageBox.Show("Vui lòng nhập đầy đủ thông tin SSH:\n• SSH Host\n• Username\n• Password", 
+                "SSH Configuration", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            btnTestSSH.Enabled = false;
+            lblSSHStatus.Text = "SSH: Connecting...";
+            lblSSHStatus.ForeColor = Color.Orange;
+            Application.DoEvents();
+
+            // Close existing tunnel if any
+            _sshTunnelService?.CloseTunnel();
+            _sshTunnelService?.Dispose();
+            
+            // Create new SSH tunnel service
+            _sshTunnelService = new SshTunnelService();
+
+            // Test SSH connection first
+            var sshConnected = await _sshTunnelService.TestSshConnectionAsync(
+                txtSSHHost.Text.Trim(),
+                (int)numSSHPort.Value,
+                txtSSHUsername.Text.Trim(),
+                txtSSHPassword.Text
+            );
+
+            if (!sshConnected)
+            {
+                lblSSHStatus.Text = "SSH: Connection failed";
+                lblSSHStatus.ForeColor = Color.Red;
+                MessageBox.Show("❌ SSH connection failed!\n\nKiểm tra:\n• SSH host và port\n• Username/password\n• Network connectivity", 
+                    "SSH Connection Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Create SSH tunnel
+            var tunnelCreated = await _sshTunnelService.CreateTunnelAsync(
+                txtSSHHost.Text.Trim(),
+                (int)numSSHPort.Value,
+                txtSSHUsername.Text.Trim(),
+                txtSSHPassword.Text,
+                txtRemoteDbHost.Text.Trim(),
+                (int)numRemoteDbPort.Value
+            );
+
+            if (tunnelCreated && _sshTunnelService.IsConnected)
+            {
+                lblSSHStatus.Text = $"SSH: Connected (Port {_sshTunnelService.LocalPort})";
+                lblSSHStatus.ForeColor = Color.Green;
+                
+                lblStatus.Text = $"✅ SSH Tunnel active: localhost:{_sshTunnelService.LocalPort} -> {txtRemoteDbHost.Text}:{numRemoteDbPort.Value}";
+                lblStatus.ForeColor = Color.Green;
+                
+                MessageBox.Show($"✅ SSH Tunnel thành công!\n\n" +
+                              $"SSH Server: {txtSSHHost.Text}:{numSSHPort.Value}\n" +
+                              $"Remote DB: {txtRemoteDbHost.Text}:{numRemoteDbPort.Value}\n" +
+                              $"Local Port: {_sshTunnelService.LocalPort}\n\n" +
+                              $"Bây giờ có thể test database connection.", 
+                    "SSH Tunnel Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                lblSSHStatus.Text = "SSH: Tunnel failed";
+                lblSSHStatus.ForeColor = Color.Red;
+                MessageBox.Show("❌ SSH tunnel creation failed!\n\nKiểm tra:\n• Remote database host/port\n• SSH permissions\n• Firewall settings", 
+                    "SSH Tunnel Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            lblSSHStatus.Text = "SSH: Error";
+            lblSSHStatus.ForeColor = Color.Red;
+            lblStatus.Text = $"❌ SSH Error: {ex.Message}";
+            lblStatus.ForeColor = Color.Red;
+            
+            MessageBox.Show($"❌ SSH connection error:\n\n{ex.Message}\n\nChi tiết:\n{ex.GetType().Name}", 
+                "SSH Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            btnTestSSH.Enabled = true;
+        }
+    }
+
+    #endregion
 }

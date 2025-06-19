@@ -23,6 +23,58 @@ public static class DbConnectionFactory
     }
 
     /// <summary>
+    /// Create connection through SSH tunnel if configured
+    /// </summary>
+    public static async Task<IDbConnection> CreateConnectionAsync(string databaseType, string connectionString, SshTunnelService? sshService = null)
+    {
+        if (sshService?.IsConnected == true)
+        {
+            // Use SSH tunnel connection
+            var tunnelConnectionString = sshService.GetTunnelConnectionString(
+                ExtractDatabaseName(connectionString),
+                ExtractUsername(connectionString),
+                ExtractPassword(connectionString)
+            );
+            return CreateConnection(databaseType, tunnelConnectionString);
+        }
+        
+        // Use direct connection
+        return CreateConnection(databaseType, connectionString);
+    }
+
+    /// <summary>
+    /// Extract database name from connection string
+    /// </summary>
+    public static string? ExtractDatabaseName(string connectionString)
+    {
+        var parts = connectionString.Split(';');
+        var dbPart = parts.FirstOrDefault(p => p.Trim().StartsWith("Database=", StringComparison.OrdinalIgnoreCase));
+        return dbPart?.Split('=')[1] ?? "";
+    }
+
+    /// <summary>
+    /// Extract username from connection string
+    /// </summary>
+    public static string? ExtractUsername(string connectionString)
+    {
+        var parts = connectionString.Split(';');
+        var userPart = parts.FirstOrDefault(p => p.Trim().StartsWith("Uid=", StringComparison.OrdinalIgnoreCase) || 
+                                                 p.Trim().StartsWith("User Id=", StringComparison.OrdinalIgnoreCase));
+        return userPart?.Split('=')[1] ?? "";
+    }
+
+    /// <summary>
+    /// Extract password from connection string
+    /// </summary>
+    public static string? ExtractPassword(string connectionString)
+    {
+        var parts = connectionString.Split(';');
+        var pwdPart = parts.FirstOrDefault(p => p.Trim().StartsWith("Pwd=", StringComparison.OrdinalIgnoreCase) || 
+                                                p.Trim().StartsWith("Password=", StringComparison.OrdinalIgnoreCase));
+        return pwdPart?.Split('=')[1] ?? "";
+    }
+
+    /// <summary>
     /// Đảm bảo connection string có timeout settings đầy đủ
     /// </summary>
     private static string EnsureTimeoutSettings(string databaseType, string connectionString)

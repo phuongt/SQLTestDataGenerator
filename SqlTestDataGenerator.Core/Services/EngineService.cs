@@ -57,27 +57,52 @@ public class EngineService
 
     public async Task<bool> TestConnectionAsync(string databaseType, string connectionString)
     {
+        return await TestConnectionAsync(databaseType, connectionString, null);
+    }
+
+    public async Task<bool> TestConnectionAsync(string databaseType, string connectionString, SshTunnelService? sshService)
+    {
         try
         {
-            using var connection = DbConnectionFactory.CreateConnection(databaseType, connectionString);
-            connection.Open();
+            IDbConnection connection;
             
-            // Test with a simple query
-            var testQuery = databaseType.ToLower() switch
+            if (sshService?.IsConnected == true)
             {
-                "sql server" => "SELECT 1",
-                "mysql" => "SELECT 1",
-                "postgresql" => "SELECT 1",
-                _ => "SELECT 1"
-            };
+                // Use SSH tunnel connection
+                connection = await DbConnectionFactory.CreateConnectionAsync(databaseType, connectionString, sshService);
+                _logger.Information("Testing database connection via SSH tunnel on port {LocalPort}", sshService.LocalPort);
+            }
+            else
+            {
+                // Use direct connection
+                connection = DbConnectionFactory.CreateConnection(databaseType, connectionString);
+                _logger.Information("Testing direct database connection");
+            }
 
-            await connection.QueryAsync(testQuery, commandTimeout: 300); // 5 phút timeout
-            _logger.Information("Database connection test successful for {DatabaseType}", databaseType);
-            return true;
+            using (connection)
+            {
+                connection.Open();
+                
+                // Test with a simple query
+                var testQuery = databaseType.ToLower() switch
+                {
+                    "sql server" => "SELECT 1",
+                    "mysql" => "SELECT 1",
+                    "postgresql" => "SELECT 1",
+                    _ => "SELECT 1"
+                };
+
+                await connection.QueryAsync(testQuery, commandTimeout: 300); // 5 phút timeout
+                
+                var connectionType = sshService?.IsConnected == true ? "SSH tunneled" : "direct";
+                _logger.Information("Database connection test successful for {DatabaseType} via {ConnectionType}", databaseType, connectionType);
+                return true;
+            }
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Database connection test failed for {DatabaseType}", databaseType);
+            var connectionType = sshService?.IsConnected == true ? "SSH tunneled" : "direct";
+            _logger.Error(ex, "Database connection test failed for {DatabaseType} via {ConnectionType}", databaseType, connectionType);
             return false;
         }
     }
