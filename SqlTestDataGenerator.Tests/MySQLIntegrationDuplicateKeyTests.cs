@@ -38,7 +38,7 @@ public class MySQLIntegrationDuplicateKeyTests
     [TestInitialize]
     public void Setup()
     {
-        _engineService = new EngineService();
+        _engineService = new EngineService(DatabaseType.MySQL, REAL_MYSQL_CONNECTION);
     }
 
     [TestMethod]
@@ -287,6 +287,54 @@ public class MySQLIntegrationDuplicateKeyTests
         {
             Console.WriteLine($"❌ MySQL connection failed: {ex.Message}");
             Assert.Fail($"Could not connect to MySQL database: {ex.Message}");
+        }
+    }
+
+    [TestMethod]
+    public async Task Debug_MySQLColumnTypes_ShouldShowActualDataTypes()
+    {
+        try
+        {
+            using var connection = new MySqlConnector.MySqlConnection(REAL_MYSQL_CONNECTION);
+            await connection.OpenAsync();
+
+            // Query to see actual column types from MySQL schema
+            var query = @"
+                SELECT 
+                    COLUMN_NAME,
+                    DATA_TYPE,
+                    COLUMN_TYPE,
+                    IS_NULLABLE
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_NAME = 'users'
+                    AND TABLE_SCHEMA = DATABASE()
+                    AND COLUMN_NAME IN ('date_of_birth', 'hire_date', 'last_login_at', 'created_at', 'updated_at')
+                ORDER BY ORDINAL_POSITION";
+
+            using var command = new MySqlConnector.MySqlCommand(query, connection);
+            using var reader = await command.ExecuteReaderAsync();
+
+            Console.WriteLine("=== MySQL Column Types Debug ===");
+            while (await reader.ReadAsync())
+            {
+                var columnName = reader.GetString("COLUMN_NAME");
+                var dataType = reader.GetString("DATA_TYPE");
+                var columnType = reader.GetString("COLUMN_TYPE");
+                var isNullable = reader.GetString("IS_NULLABLE");
+
+                Console.WriteLine($"Column: {columnName}");
+                Console.WriteLine($"  DATA_TYPE: '{dataType}'");
+                Console.WriteLine($"  COLUMN_TYPE: '{columnType}'");
+                Console.WriteLine($"  IS_NULLABLE: {isNullable}");
+                Console.WriteLine();
+            }
+
+            Assert.IsTrue(true, "Debug test completed - check console output");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Debug test failed: {ex.Message}");
+            throw;
         }
     }
 

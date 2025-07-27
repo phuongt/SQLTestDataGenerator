@@ -47,7 +47,8 @@ public enum DatabaseType
 {
     SqlServer,
     MySQL,
-    PostgreSQL
+    PostgreSQL,
+    Oracle
 }
 
 public class DatabaseInfo

@@ -35,12 +35,15 @@ public class SqlMetadataService
         {
             try
             {
+                Console.WriteLine($"[SqlMetadataService] Loading schema for table: {tableName}");
                 var tableSchema = await GetTableSchemaAsync(connection, dbType, tableName);
                 databaseInfo.Tables[tableName] = tableSchema;
+                Console.WriteLine($"[SqlMetadataService] ✅ Loaded schema for table: {tableName} with {tableSchema.Columns.Count} columns");
                 _logger.Information("Loaded schema for table: {TableName}", tableName);
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"[SqlMetadataService] ❌ Failed to load schema for table: {tableName} - {ex.Message}");
                 _logger.Warning(ex, "Failed to load schema for table: {TableName}", tableName);
                 // Continue with other tables
             }
@@ -104,9 +107,10 @@ public class SqlMetadataService
                 columnSchema.EnumValues = ParseEnumValues(columnType.ToString()); // Parse and store ENUM values
             }
             
-            // Fix: Handle IS_NULLABLE as string only, don't mix with bool
-            var isNullableValue = column.IS_NULLABLE ?? column.is_nullable;
-            columnSchema.IsNullable = isNullableValue?.ToString()?.ToUpper() == "YES";
+            // Handle nullable field - Oracle returns 'Y'/'N', others return 'YES'/'NO'
+            var isNullableValue = column.IS_NULLABLE ?? column.is_nullable ?? column.nullable;
+            var nullableString = isNullableValue?.ToString()?.ToUpper();
+            columnSchema.IsNullable = nullableString == "YES" || nullableString == "Y";
             
             // Fix: Handle IS_PRIMARY_KEY as int/long only, don't mix with bool  
             var isPrimaryKeyValue = column.IS_PRIMARY_KEY ?? column.is_primary_key;
@@ -235,13 +239,14 @@ public class SqlMetadataService
             
             // Enhanced patterns to match table names after FROM, JOIN keywords with aliases
             // Support for: standard names, [brackets], and `backticks`
+            // Fixed: More restrictive patterns to avoid matching column references
             var patterns = new[]
             {
-                @"\bFROM\s+(?:(?:\w+\.)?(\w+)|\[([^\]]+)\]|`([^`]+)`)(?:\s+(?:AS\s+)?(\w+))?",
-                @"\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|OUTER\s+)?JOIN\s+(?:(?:\w+\.)?(\w+)|\[([^\]]+)\]|`([^`]+)`)(?:\s+(?:AS\s+)?(\w+))?",
-                @"\bINTO\s+(?:(?:\w+\.)?(\w+)|\[([^\]]+)\]|`([^`]+)`)",
-                @"\bUPDATE\s+(?:(?:\w+\.)?(\w+)|\[([^\]]+)\]|`([^`]+)`)",
-                @"\bINSERT\s+INTO\s+(?:(?:\w+\.)?(\w+)|\[([^\]]+)\]|`([^`]+)`)"
+                @"\bFROM\s+(?:(\w+)|\[([^\]]+)\]|`([^`]+)`)(?:\s+(?:AS\s+)?(\w+))?(?=\s|$|WHERE|INNER|LEFT|RIGHT|FULL|JOIN|ORDER|GROUP|HAVING|LIMIT)",
+                @"\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|OUTER\s+)?JOIN\s+(?:(\w+)|\[([^\]]+)\]|`([^`]+)`)(?:\s+(?:AS\s+)?(\w+))?(?=\s+ON|\s|$)",
+                @"\bINTO\s+(?:(\w+)|\[([^\]]+)\]|`([^`]+)`)",
+                @"\bUPDATE\s+(?:(\w+)|\[([^\]]+)\]|`([^`]+)`)",
+                @"\bINSERT\s+INTO\s+(?:(\w+)|\[([^\]]+)\]|`([^`]+)`)"
             };
 
             foreach (var pattern in patterns)

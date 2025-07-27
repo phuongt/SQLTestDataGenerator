@@ -138,15 +138,29 @@ public class EnhancedGeminiFlashRotationService
     // Configuration
     private const int MAX_MODEL_FAILURES = 3;
     private const int MODEL_RECOVERY_MINUTES = 10;
-    private static readonly SemaphoreSlim _rateLimitSemaphore = new SemaphoreSlim(1, 1);
-    private static DateTime _lastApiCall = DateTime.MinValue;
-    private static readonly TimeSpan _minDelayBetweenCalls = TimeSpan.FromSeconds(5);
+    // Model rotation tracking - track last used model để tránh dùng lại ngay lập tức
+    private static readonly Dictionary<string, DateTime> _lastModelUsage = new Dictionary<string, DateTime>();
+    private static readonly TimeSpan _modelCooldownPeriod = TimeSpan.Zero; // No cooldown - active rotation
 
-    // Daily API Limit Management
+    // API Limit Management - Hourly and Daily
     private static int _dailyCallCount = 0;
+    private static int _hourlyCallCount = 0;
     private static DateTime _dailyLimitResetTime = DateTime.UtcNow.Date.AddDays(1); // Reset at midnight next day
+    private static DateTime _hourlyLimitResetTime = DateTime.UtcNow.AddHours(1); // Reset every hour
     private static readonly int _dailyCallLimit = 100; // Default 100 calls per day - configurable
-    private static readonly object _dailyLimitLock = new object();
+    private static readonly int _hourlyCallLimit = 15; // Default 15 calls per hour - configurable
+    private static readonly object _limitLock = new object();
+
+    // Model Health Persistence
+    private static readonly string _modelHealthFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "model-health.json");
+    private static readonly object _persistenceLock = new object();
+    private static DateTime _lastHealthSave = DateTime.MinValue;
+    private static readonly TimeSpan _healthSaveInterval = TimeSpan.FromMinutes(1); // Save every minute
+
+    // Current prompt tracking for UI display
+    private string _currentPrompt = string.Empty;
+    private DateTime _currentPromptTimestamp = DateTime.MinValue;
+    private string _currentModelUsed = string.Empty;
 
     public EnhancedGeminiFlashRotationService(string apiKey)
     {
@@ -155,6 +169,7 @@ public class EnhancedGeminiFlashRotationService
         _httpClient.Timeout = TimeSpan.FromMinutes(3);
         _apiKey = apiKey;
         
+        LoadModelHealthFromFile(); // Load persisted health data
         InitializeModelHealth();
         
         if (string.IsNullOrEmpty(_apiKey))
@@ -166,9 +181,11 @@ public class EnhancedGeminiFlashRotationService
             _logger.Information("🚀 SUPER OPTIMIZATION generator enabled (1 AI call for all tables)");
             _logger.Information("🔄 OpenAI Service initialized with {ModelCount} Flash models rotation", _geminiFlashModels.Count);
             _logger.Information("🔄 Model rotation includes: {Models}", string.Join(", ", _geminiFlashModels.Select(m => m.ModelName)));
-            _logger.Information("⏰ Rate limiting: {DelaySeconds}s between API calls", _minDelayBetweenCalls.TotalSeconds);
-            _logger.Information("📊 Daily API limit: {DailyLimit} calls per day, resets at: {ResetTime}",
+            _logger.Information("🔄 Model rotation: {CooldownSeconds}s cooldown per model", _modelCooldownPeriod.TotalSeconds);
+            _logger.Information("📊 API limits: {HourlyLimit}/hour (resets: {HourlyReset}), {DailyLimit}/day (resets: {DailyReset})",
+                _hourlyCallLimit, _hourlyLimitResetTime.ToString("HH:mm:ss UTC"), 
                 _dailyCallLimit, _dailyLimitResetTime.ToString("yyyy-MM-dd HH:mm:ss UTC"));
+            _logger.Information("💾 Model health persistence: {HealthFile}", _modelHealthFile);
         }
     }
 
@@ -179,13 +196,153 @@ public class EnhancedGeminiFlashRotationService
     {
         foreach (var model in _geminiFlashModels)
         {
-            _modelHealth[model.ModelName] = new ModelHealthInfo
+            // Only initialize if not already loaded from file
+            if (!_modelHealth.ContainsKey(model.ModelName))
+            {
+                _modelHealth[model.ModelName] = new ModelHealthInfo
             {
                 FailureCount = 0,
                 LastFailure = DateTime.MinValue,
-                IsHealthy = true
-            };
+                    IsHealthy = true,
+                    LastFailureReason = null,
+                    RecoveryTime = null,
+                    LimitType = null
+                };
+            }
         }
+    }
+
+    /// <summary>
+    /// Load model health data from persistent file
+    /// </summary>
+    private void LoadModelHealthFromFile()
+    {
+        try
+        {
+            if (!File.Exists(_modelHealthFile))
+            {
+                _logger.Information("📁 No existing model health file found. Starting fresh.");
+                return;
+            }
+
+            var jsonContent = File.ReadAllText(_modelHealthFile);
+            var healthData = JsonSerializer.Deserialize<Dictionary<string, ModelHealthInfo>>(jsonContent, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (healthData != null)
+            {
+                lock (_modelRotationLock)
+                {
+                    foreach (var kvp in healthData)
+                    {
+                        var modelName = kvp.Key;
+                        var healthInfo = kvp.Value;
+
+                        // Validate recovery time - if it's in the past, reset the model
+                        if (healthInfo.RecoveryTime.HasValue && healthInfo.RecoveryTime.Value <= DateTime.UtcNow)
+                        {
+                            _logger.Information("🔄 Model {Model} recovery time expired, resetting health", modelName);
+                            healthInfo.FailureCount = 0;
+                            healthInfo.IsHealthy = true;
+                            healthInfo.LastFailureReason = null;
+                            healthInfo.RecoveryTime = null;
+                            healthInfo.LimitType = null;
+                        }
+
+                        _modelHealth[modelName] = healthInfo;
+                    }
+                }
+
+                var loadedCount = healthData.Count;
+                var healthyCount = healthData.Values.Count(h => h.IsHealthy);
+                _logger.Information("📂 Loaded model health data: {LoadedCount} models, {HealthyCount} healthy", loadedCount, healthyCount);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning("⚠️ Failed to load model health data: {Error}. Starting fresh.", ex.Message);
+            // Clear any partial data
+            lock (_modelRotationLock)
+            {
+                _modelHealth.Clear();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Save model health data to persistent file
+    /// </summary>
+    private void SaveModelHealthToFile()
+    {
+        try
+        {
+            // Ensure data directory exists
+            var dataDir = Path.GetDirectoryName(_modelHealthFile);
+            if (!string.IsNullOrEmpty(dataDir) && !Directory.Exists(dataDir))
+            {
+                Directory.CreateDirectory(dataDir);
+            }
+
+            Dictionary<string, ModelHealthInfo> healthDataToSave;
+            lock (_modelRotationLock)
+            {
+                healthDataToSave = new Dictionary<string, ModelHealthInfo>(_modelHealth);
+            }
+
+            var jsonContent = JsonSerializer.Serialize(healthDataToSave, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            // Use atomic write to prevent corruption
+            var tempFile = _modelHealthFile + ".tmp";
+            File.WriteAllText(tempFile, jsonContent);
+            File.Move(tempFile, _modelHealthFile, true);
+
+            _lastHealthSave = DateTime.UtcNow;
+            _logger.Debug("💾 Model health data saved: {ModelCount} models", healthDataToSave.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning("⚠️ Failed to save model health data: {Error}", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Trigger health data save if enough time has passed
+    /// </summary>
+    private void TrySaveModelHealth()
+    {
+        if (DateTime.UtcNow - _lastHealthSave >= _healthSaveInterval)
+        {
+            SaveModelHealthToFile();
+        }
+    }
+
+    /// <summary>
+    /// Force save model health data immediately
+    /// </summary>
+    public void ForceSaveModelHealth()
+    {
+        SaveModelHealthToFile();
+    }
+
+    /// <summary>
+    /// Force reload model health data from file
+    /// </summary>
+    public void ForceReloadModelHealth()
+    {
+        LoadModelHealthFromFile();
+    }
+
+    /// <summary>
+    /// Get the path to the model health file
+    /// </summary>
+    public string GetModelHealthFilePath()
+    {
+        return _modelHealthFile;
     }
 
     /// <summary>
@@ -200,8 +357,9 @@ public class EnhancedGeminiFlashRotationService
             var currentIndex = (_currentModelIndex - 1 + _geminiFlashModels.Count) % _geminiFlashModels.Count;
             var currentModel = _geminiFlashModels[currentIndex];
             
-            _logger.Debug("Current active model: {ModelName} (Index: {Index})", 
-                currentModel.ModelName, currentIndex);
+            // Removed debug logging to prevent log spam from UI timer
+            // _logger.Debug("Current active model: {ModelName} (Index: {Index})", 
+            //     currentModel.ModelName, currentIndex);
             
             return currentModel.ModelName;
         }
@@ -240,14 +398,28 @@ public class EnhancedGeminiFlashRotationService
                 
                 if (healthyModelsInTier.Any())
                 {
-                    // Round-robin within the tier
+                    // Active rotation: always move to next model, no cooldown
                     var selectedModel = healthyModelsInTier[_currentModelIndex % healthyModelsInTier.Count];
                     _currentModelIndex++;
                     
-                    _logger.Information("🔄 Selected Flash model: {Model} (tier: {Tier}, index: {Index})", 
+                    _logger.Information("🔄 Active rotation - Selected Flash model: {Model} (tier: {Tier}, index: {Index})", 
                         selectedModel.ModelName, selectedModel.Tier, _currentModelIndex);
                     
                     return selectedModel.ModelName;
+                }
+                else
+                {
+                    // Log which models are being skipped in this tier
+                    var unhealthyModelsInTier = _geminiFlashModels
+                        .Where(m => m.Tier == tier && !IsModelHealthy(m.ModelName))
+                        .ToList();
+                    
+                    if (unhealthyModelsInTier.Any())
+                    {
+                        var skippedModels = string.Join(", ", unhealthyModelsInTier.Select(m => 
+                            $"{m.ModelName}({_modelHealth.GetValueOrDefault(m.ModelName)?.LastFailureReason ?? "unknown"})"));
+                        _logger.Debug("⏭️ Skipping {Tier} tier models: {Models}", tier, skippedModels);
+                    }
                 }
             }
             
@@ -261,31 +433,90 @@ public class EnhancedGeminiFlashRotationService
     }
 
     /// <summary>
-    /// Check if model is healthy (not failed too many times recently)
+    /// Check if model is healthy based on calculated recovery time from API limits
     /// </summary>
     private bool IsModelHealthy(string modelName)
     {
         if (!_modelHealth.ContainsKey(modelName)) return true;
         
         var health = _modelHealth[modelName];
-        if (health.FailureCount < MAX_MODEL_FAILURES) return true;
         
-        // Check if enough time has passed for recovery
-        var timeSinceLastFailure = DateTime.UtcNow - health.LastFailure;
-        if (timeSinceLastFailure.TotalMinutes > MODEL_RECOVERY_MINUTES)
+        // If model has failed too many times, check recovery time
+        if (health.FailureCount >= MAX_MODEL_FAILURES)
+        {
+            // Check if model is permanently disabled (404)
+            if (health.LastFailureReason?.Contains("404_MODEL_NOT_FOUND") == true)
+            {
+                _logger.Debug("🚫 Model {Model} permanently disabled (404)", modelName);
+                return false;
+            }
+            
+            // Use calculated recovery time if available, otherwise fallback to default
+            if (health.RecoveryTime.HasValue)
+            {
+                // Check if model is permanently disabled (recovery time = MaxValue)
+                if (health.RecoveryTime.Value == DateTime.MaxValue)
+                {
+                    _logger.Debug("🚫 Model {Model} permanently disabled", modelName);
+                    return false;
+                }
+                
+                if (DateTime.UtcNow >= health.RecoveryTime.Value)
+                {
+                    // Model has recovered - reset health
+                    health.FailureCount = 0;
+                    health.IsHealthy = true;
+                    health.LastFailureReason = null;
+                    health.RecoveryTime = null;
+                    health.LimitType = null;
+                    
+                    var recoveryDuration = health.RecoveryTime.Value - health.LastFailure;
+                    _logger.Information("🔄 Model {Model} recovered after {Duration} (limit type: {LimitType})", 
+                        modelName, recoveryDuration.ToString(@"hh\:mm\:ss"), health.LimitType ?? "unknown");
+                    
+                    // Trigger save to persist the recovery
+                    TrySaveModelHealth();
+                    return true;
+                }
+                else
+                {
+                    // Model is still in recovery period
+                    var timeRemaining = health.RecoveryTime.Value - DateTime.UtcNow;
+                    _logger.Debug("⏭️ Skipping model {Model} - recovery in {TimeRemaining} (limit: {LimitType})", 
+                        modelName, timeRemaining.ToString(@"mm\:ss"), health.LimitType ?? "unknown");
+                    return false;
+                }
+            }
+            else
+            {
+                // Fallback to old logic for backward compatibility
+                var timeSinceLastFailure = DateTime.UtcNow - health.LastFailure;
+                var recoveryTimeMinutes = health.LastFailureReason?.Contains("429") == true ? 
+                    MODEL_RECOVERY_MINUTES * 2 : MODEL_RECOVERY_MINUTES;
+                
+                if (timeSinceLastFailure.TotalMinutes > recoveryTimeMinutes)
         {
             // Reset failure count for recovery
             health.FailureCount = 0;
             health.IsHealthy = true;
-            _logger.Information("🔄 Model {Model} recovered after {Minutes} minutes", modelName, MODEL_RECOVERY_MINUTES);
+                    health.LastFailureReason = null;
+                    _logger.Information("🔄 Model {Model} recovered after {Minutes} minutes (fallback logic)", 
+                        modelName, recoveryTimeMinutes);
             return true;
+                }
+                
+                // Model is still unhealthy - completely skip it
+                _logger.Debug("⏭️ Skipping unhealthy model {Model} (failures: {Count}, last failure: {LastFailure}, reason: {Reason})", 
+                    modelName, health.FailureCount, health.LastFailure.ToString("HH:mm:ss"), health.LastFailureReason ?? "unknown");
+                return false;
+            }
         }
         
-        return false;
+        return true;
     }
 
     /// <summary>
-    /// Mark model as failed và increment failure count
+    /// Mark model as failed và calculate recovery time based on API limits
     /// </summary>
     public void MarkModelAsFailed(string modelName, Exception ex)
     {
@@ -301,9 +532,68 @@ public class EnhancedGeminiFlashRotationService
             health.LastFailure = DateTime.UtcNow;
             health.IsHealthy = health.FailureCount < MAX_MODEL_FAILURES;
             
-            _logger.Warning("❌ Model {Model} failed (count: {Count}): {Error}", 
-                modelName, health.FailureCount, ex.Message);
+            // Calculate recovery time based on error type and API limits
+            DateTime recoveryTime;
+            string limitType;
+            string failureReason;
+            
+            if (ex.Message.Contains("429") || ex.Message.Contains("rate limit"))
+            {
+                // Rate limit error - use hourly limit reset time
+                recoveryTime = _hourlyLimitResetTime;
+                limitType = "hourly_rate_limit";
+                failureReason = "429_RATE_LIMIT";
+                
+                _logger.Warning("🚫 Model {Model} rate limited (count: {Count}) - will recover at {RecoveryTime} (hourly limit)", 
+                    modelName, health.FailureCount, recoveryTime.ToString("HH:mm:ss UTC"));
+            }
+            else if (ex.Message.Contains("404_MODEL_NOT_FOUND"))
+            {
+                // 404 - Model not found - permanently disable
+                recoveryTime = DateTime.MaxValue; // Never recover
+                limitType = "model_not_found";
+                failureReason = "404_MODEL_NOT_FOUND";
+                
+                _logger.Warning("🚫 Model {Model} not found (404) - permanently disabled", modelName);
+            }
+            else if (ex.Message.Contains("quota exceeded") || ex.Message.Contains("daily limit"))
+            {
+                // Daily quota exceeded - use daily limit reset time
+                recoveryTime = _dailyLimitResetTime;
+                limitType = "daily_quota";
+                failureReason = "DAILY_QUOTA_EXCEEDED";
+                
+                _logger.Warning("📊 Model {Model} daily quota exceeded (count: {Count}) - will recover at {RecoveryTime} (daily limit)", 
+                    modelName, health.FailureCount, recoveryTime.ToString("yyyy-MM-dd HH:mm:ss UTC"));
+            }
+            else if (ex.Message.Contains("500") || ex.Message.Contains("502") || ex.Message.Contains("503"))
+            {
+                // Server error - use shorter recovery time
+                recoveryTime = DateTime.UtcNow.AddMinutes(MODEL_RECOVERY_MINUTES);
+                limitType = "server_error";
+                failureReason = "5XX_SERVER_ERROR";
+                
+                _logger.Warning("🔧 Model {Model} server error (count: {Count}) - will recover at {RecoveryTime} (temporary)", 
+                    modelName, health.FailureCount, recoveryTime.ToString("HH:mm:ss UTC"));
+            }
+            else
+            {
+                // Other error - use default recovery time
+                recoveryTime = DateTime.UtcNow.AddMinutes(MODEL_RECOVERY_MINUTES);
+                limitType = "other_error";
+                failureReason = "OTHER_ERROR";
+                
+                _logger.Warning("❌ Model {Model} failed (count: {Count}): {Error} - will recover at {RecoveryTime}", 
+                    modelName, health.FailureCount, ex.Message, recoveryTime.ToString("HH:mm:ss UTC"));
+            }
+            
+            health.LastFailureReason = failureReason;
+            health.RecoveryTime = recoveryTime;
+            health.LimitType = limitType;
         }
+        
+        // Trigger save to persist the failure
+        TrySaveModelHealth();
     }
 
     /// <summary>
@@ -316,7 +606,14 @@ public class EnhancedGeminiFlashRotationService
             health.FailureCount = 0;
             health.LastFailure = DateTime.MinValue;
             health.IsHealthy = true;
+            health.LastFailureReason = null;
+            health.RecoveryTime = null;
+            health.LimitType = null;
         }
+        _logger.Information("🔄 All model failures reset - fresh start for all models");
+        
+        // Trigger save to persist the reset
+        TrySaveModelHealth();
     }
 
     /// <summary>
@@ -324,7 +621,11 @@ public class EnhancedGeminiFlashRotationService
     /// </summary>
     public async Task<string> CallGeminiAPIAsync(string prompt, int maxTokens = 4000)
     {
-        // CRITICAL: Check time availability trước khi proceed
+        // Store current prompt for UI display
+        _currentPrompt = prompt;
+        _currentPromptTimestamp = DateTime.UtcNow;
+        
+        // Check daily/hourly limits only (no rate limiting)
         if (!CanCallAPINow())
         {
             var nextCallableTime = GetNextCallableTime();
@@ -338,33 +639,32 @@ public class EnhancedGeminiFlashRotationService
             }
             else
             {
-                _logger.Information("⏰ API call delayed - Rate limit. Waiting {WaitSeconds} seconds until {NextTime}",
+                _logger.Information("⏰ API call delayed - Hourly limit. Waiting {WaitSeconds} seconds until {NextTime}",
                     Math.Ceiling(waitTime.TotalSeconds), nextCallableTime.ToString("HH:mm:ss UTC"));
                 await Task.Delay(waitTime);
             }
         }
 
-        // Rate limiting semaphore: chỉ cho phép 1 call concurrent
-        await _rateLimitSemaphore.WaitAsync();
-        try
+        // Initialize model usage tracking if needed
+        lock (_modelRotationLock)
         {
-            // Double-check time availability after acquiring semaphore
-            var timeSinceLastCall = DateTime.UtcNow - _lastApiCall;
-            if (timeSinceLastCall < _minDelayBetweenCalls)
+            foreach (var model in _geminiFlashModels)
             {
-                var delayNeeded = _minDelayBetweenCalls - timeSinceLastCall;
-                _logger.Information("⏰ Final rate limit check: waiting {DelayMs}ms before API call", 
-                    delayNeeded.TotalMilliseconds);
-                await Task.Delay(delayNeeded);
+                if (!_lastModelUsage.ContainsKey(model.ModelName))
+                {
+                    _lastModelUsage[model.ModelName] = DateTime.MinValue;
+                }
             }
+        }
 
-            // Increment daily call count
-            lock (_dailyLimitLock)
-            {
-                _dailyCallCount++;
-                _logger.Information("📊 Daily API usage: {CurrentCount}/{DailyLimit} calls used", 
-                    _dailyCallCount, _dailyCallLimit);
-            }
+        // Increment API call counts
+        lock (_limitLock)
+        {
+            _dailyCallCount++;
+            _hourlyCallCount++;
+            _logger.Information("📊 API usage: {HourlyCount}/{HourlyLimit} per hour, {DailyCount}/{DailyLimit} per day", 
+                _hourlyCallCount, _hourlyCallLimit, _dailyCallCount, _dailyCallLimit);
+        }
 
             var requestBody = new
             {
@@ -398,6 +698,7 @@ public class EnhancedGeminiFlashRotationService
             for (int retry = 0; retry < maxRetries; retry++)
             {
                 var currentModel = GetNextFlashModel();
+                _currentModelUsed = currentModel; // Store for UI display
                 var requestUrl = $"https://generativelanguage.googleapis.com/v1beta/models/{currentModel}:generateContent?key={_apiKey}";
                 
                 try
@@ -406,7 +707,11 @@ public class EnhancedGeminiFlashRotationService
                         currentModel, retry + 1, maxRetries);
                     
                     var response = await _httpClient.PostAsync(requestUrl, content);
-                    _lastApiCall = DateTime.UtcNow;
+                    // Track model usage for rotation
+                    lock (_modelRotationLock)
+                    {
+                        _lastModelUsage[currentModel] = DateTime.UtcNow;
+                    }
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -422,10 +727,22 @@ public class EnhancedGeminiFlashRotationService
                         _logger.Warning("⚠️ Model {Model} returned error: {StatusCode} - {Error}", 
                             currentModel, response.StatusCode, errorContent);
                         
-                        // Mark model as failed if it's a rate limit or server error
-                        if ((int)response.StatusCode == 429 || (int)response.StatusCode >= 500)
+                        // Mark model as failed for various error types
+                        if ((int)response.StatusCode == 404)
+                        {
+                            // 404 - Model not found - mark as permanently failed
+                            MarkModelAsFailed(currentModel, new Exception($"404_MODEL_NOT_FOUND: {currentModel} is not available"));
+                            _logger.Warning("🚫 Model {Model} not found (404) - will be permanently skipped", currentModel);
+                        }
+                        else if ((int)response.StatusCode == 429 || (int)response.StatusCode >= 500)
                         {
                             MarkModelAsFailed(currentModel, exception);
+                            
+                            // For rate limit errors, log specific message
+                            if ((int)response.StatusCode == 429)
+                            {
+                                _logger.Warning("🚫 Model {Model} rate limited - will be skipped for extended period", currentModel);
+                            }
                         }
                         
                         lastException = exception;
@@ -472,11 +789,7 @@ public class EnhancedGeminiFlashRotationService
             _logger.Error("❌ All Flash models failed after {Retries} attempts. Limit API AI reached.", maxRetries);
             throw lastException ?? new Exception("Limit API AI: All Gemini Flash models exhausted after multiple retry attempts");
         }
-        finally
-        {
-            _rateLimitSemaphore.Release();
-        }
-    }
+        // No finally block needed - no semaphore to release
 
     /// <summary>
     /// Get current model statistics
@@ -510,12 +823,16 @@ public class EnhancedGeminiFlashRotationService
     /// </summary>
     public bool CanCallAPINow()
     {
-        lock (_dailyLimitLock)
+        lock (_limitLock)
         {
-            // Check if daily limit needs reset
+            // Check if limits need reset
             if (DateTime.UtcNow >= _dailyLimitResetTime)
             {
                 ResetDailyLimits();
+            }
+            if (DateTime.UtcNow >= _hourlyLimitResetTime)
+            {
+                ResetHourlyLimits();
             }
 
             // Check daily quota
@@ -526,12 +843,29 @@ public class EnhancedGeminiFlashRotationService
                 return false;
             }
 
-            // Check rate limiting (5s between calls)
-            var timeSinceLastCall = DateTime.UtcNow - _lastApiCall;
-            if (timeSinceLastCall < _minDelayBetweenCalls)
+            // Check hourly quota
+            if (_hourlyCallCount >= _hourlyCallLimit)
             {
-                _logger.Information("⏰ Rate limit: need to wait {DelayMs}ms before next call",
-                    (_minDelayBetweenCalls - timeSinceLastCall).TotalMilliseconds);
+                _logger.Warning("🚫 Hourly API limit reached: {CurrentCount}/{HourlyLimit}. Next reset: {ResetTime}",
+                    _hourlyCallCount, _hourlyCallLimit, _hourlyLimitResetTime.ToString("HH:mm:ss UTC"));
+                return false;
+            }
+
+            // Check model rotation cooldown (no rate limiting, just model rotation)
+            var availableModels = _geminiFlashModels.Where(m => IsModelHealthy(m.ModelName)).ToList();
+            var readyModels = availableModels.Where(m => 
+            {
+                var lastUsage = _lastModelUsage.GetValueOrDefault(m.ModelName, DateTime.MinValue);
+                return DateTime.UtcNow - lastUsage >= _modelCooldownPeriod;
+            }).ToList();
+            
+            if (!readyModels.Any())
+            {
+                var nextReadyTime = availableModels.Min(m => 
+                    _lastModelUsage.GetValueOrDefault(m.ModelName, DateTime.MinValue) + _modelCooldownPeriod);
+                var waitTime = nextReadyTime - DateTime.UtcNow;
+                _logger.Information("🔄 Model rotation: waiting {DelayMs}ms for next available model",
+                    waitTime.TotalMilliseconds);
                 return false;
             }
 
@@ -548,16 +882,28 @@ public class EnhancedGeminiFlashRotationService
     }
 
     /// <summary>
+    /// Get current prompt and model info for UI display
+    /// </summary>
+    public (string ModelName, string Prompt, DateTime Timestamp) GetCurrentPromptInfo()
+    {
+        return (_currentModelUsed, _currentPrompt, _currentPromptTimestamp);
+    }
+
+    /// <summary>
     /// Get the next time when API call will be available
     /// </summary>
     public DateTime GetNextCallableTime()
     {
-        lock (_dailyLimitLock)
+        lock (_limitLock)
         {
-            // Check if daily limit needs reset
+            // Check if limits need reset
             if (DateTime.UtcNow >= _dailyLimitResetTime)
             {
                 ResetDailyLimits();
+            }
+            if (DateTime.UtcNow >= _hourlyLimitResetTime)
+            {
+                ResetHourlyLimits();
             }
 
             // If daily limit reached, return reset time (next day)
@@ -566,9 +912,21 @@ public class EnhancedGeminiFlashRotationService
                 return _dailyLimitResetTime;
             }
 
-            // Otherwise, return time based on rate limiting
-            var nextRateAllowedTime = _lastApiCall + _minDelayBetweenCalls;
-            return nextRateAllowedTime > DateTime.UtcNow ? nextRateAllowedTime : DateTime.UtcNow;
+            // If hourly limit reached, return reset time (next hour)
+            if (_hourlyCallCount >= _hourlyCallLimit)
+            {
+                return _hourlyLimitResetTime;
+            }
+
+            // Otherwise, return time based on model rotation cooldown
+            var availableModels = _geminiFlashModels.Where(m => IsModelHealthy(m.ModelName)).ToList();
+            if (availableModels.Any())
+            {
+                var nextReadyTime = availableModels.Min(m => 
+                    _lastModelUsage.GetValueOrDefault(m.ModelName, DateTime.MinValue) + _modelCooldownPeriod);
+                return nextReadyTime > DateTime.UtcNow ? nextReadyTime : DateTime.UtcNow;
+            }
+            return DateTime.UtcNow;
         }
     }
 
@@ -586,34 +944,66 @@ public class EnhancedGeminiFlashRotationService
     }
 
     /// <summary>
+    /// Reset hourly limits (called every hour)
+    /// </summary>
+    private void ResetHourlyLimits()
+    {
+        var oldCount = _hourlyCallCount;
+        _hourlyCallCount = 0;
+        _hourlyLimitResetTime = DateTime.UtcNow.AddHours(1); // Next hour
+        
+        _logger.Information("🔄 Hourly API limits reset. Previous count: {OldCount}, Next reset: {NextReset}",
+            oldCount, _hourlyLimitResetTime.ToString("HH:mm:ss UTC"));
+    }
+
+    /// <summary>
     /// Get current API usage statistics
     /// </summary>
     public Dictionary<string, object> GetAPIUsageStatistics()
     {
-        lock (_dailyLimitLock)
+        lock (_limitLock)
         {
-            // Check if daily limit needs reset
+            // Check if limits need reset
             if (DateTime.UtcNow >= _dailyLimitResetTime)
             {
                 ResetDailyLimits();
             }
+            if (DateTime.UtcNow >= _hourlyLimitResetTime)
+            {
+                ResetHourlyLimits();
+            }
 
             return new Dictionary<string, object>
             {
+                ["HourlyCallsUsed"] = _hourlyCallCount,
+                ["HourlyCallLimit"] = _hourlyCallLimit,
+                ["HourlyCallsRemaining"] = Math.Max(0, _hourlyCallLimit - _hourlyCallCount),
+                ["HourlyResetTime"] = _hourlyLimitResetTime.ToString("HH:mm:ss UTC"),
                 ["DailyCallsUsed"] = _dailyCallCount,
                 ["DailyCallLimit"] = _dailyCallLimit,
                 ["DailyCallsRemaining"] = Math.Max(0, _dailyCallLimit - _dailyCallCount),
                 ["DailyResetTime"] = _dailyLimitResetTime.ToString("yyyy-MM-dd HH:mm:ss UTC"),
-                ["LastAPICall"] = _lastApiCall.ToString("yyyy-MM-dd HH:mm:ss UTC"),
+                ["LastAPICall"] = "N/A (Model rotation mode)",
                 ["NextCallableTime"] = GetNextCallableTime().ToString("yyyy-MM-dd HH:mm:ss UTC"),
                 ["CanCallNow"] = CanCallAPINow(),
-                ["MinDelayBetweenCalls"] = _minDelayBetweenCalls.TotalSeconds + " seconds"
+                ["ModelCooldownPeriod"] = _modelCooldownPeriod.TotalSeconds + " seconds"
             };
         }
     }
 
     public void Dispose()
     {
+        // Save model health data before disposing
+        try
+        {
+            SaveModelHealthToFile();
+            _logger.Information("💾 Model health data saved on disposal");
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning("⚠️ Failed to save model health data on disposal: {Error}", ex.Message);
+        }
+        
         _httpClient?.Dispose();
     }
 }
@@ -651,6 +1041,9 @@ public class ModelHealthInfo
     public int FailureCount { get; set; }
     public DateTime LastFailure { get; set; }
     public bool IsHealthy { get; set; } = true;
+    public string? LastFailureReason { get; set; }  // Store failure reason for better recovery logic
+    public DateTime? RecoveryTime { get; set; }     // Calculated recovery time based on API limits
+    public string? LimitType { get; set; }          // Type of limit hit: "hourly", "daily", "rate_limit", "server_error"
 }
 
 #endregion 

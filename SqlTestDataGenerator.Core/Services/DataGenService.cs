@@ -2,6 +2,8 @@ using Bogus;
 using SqlTestDataGenerator.Core.Models;
 using Serilog;
 using System.Text.RegularExpressions;
+using SqlTestDataGenerator.Core.Services;
+using SqlTestDataGenerator.Core.Abstractions;
 
 namespace SqlTestDataGenerator.Core.Services;
 
@@ -9,7 +11,7 @@ public class DataGenService
 {
     private readonly OpenAiService _openAiService;
     private readonly ILogger _logger;
-    private readonly SqlQueryParserV3 _queryParser;
+    private readonly ISqlParser _queryParser;
     private readonly CoordinatedDataGenerator _coordinatedGenerator;
     private readonly CommonInsertBuilder _insertBuilder;
     private readonly AIEnhancedCoordinatedDataGenerator? _aiEnhancedGenerator;
@@ -18,13 +20,18 @@ public class DataGenService
     // Public property to access Gemini AI service for UI display
     public GeminiAIDataGenerationService? GeminiAIService => _geminiAIService;
 
-    public DataGenService(string? openAiApiKey = null)
+    public DataGenService(string? openAiApiKey = null, ISqlParser? sqlParser = null)
     {
         _openAiService = new OpenAiService(openAiApiKey);
         _logger = Log.ForContext<DataGenService>();
-        _queryParser = new SqlQueryParserV3();
+        if (sqlParser != null)
+            _queryParser = sqlParser;
+        else
+            _queryParser = new SqlQueryParserV3();
         _coordinatedGenerator = new CoordinatedDataGenerator();
-        _insertBuilder = new CommonInsertBuilder();
+        
+        // Initialize with MySQL handler as default (will be replaced based on database type)
+        _insertBuilder = new CommonInsertBuilder(new MySqlDialectHandler());
         
         // Initialize AI-enhanced generator if API key is provided
         if (!string.IsNullOrEmpty(openAiApiKey))
@@ -36,7 +43,7 @@ public class DataGenService
                 _geminiAIService = new GeminiAIDataGenerationService(openAiApiKey);
                 
                 _aiEnhancedGenerator = new AIEnhancedCoordinatedDataGenerator(
-                    _coordinatedGenerator, constraintExtractor, _geminiAIService, metadataService);
+                    _coordinatedGenerator, constraintExtractor, _geminiAIService, metadataService, _insertBuilder);
                 
                 _logger.Information("AI-enhanced data generation initialized with Gemini API");
             }
@@ -59,6 +66,13 @@ public class DataGenService
         string connectionString = "",
         ComprehensiveConstraints? comprehensiveConstraints = null)
     {
+        // 🔧 CRITICAL FIX: When UseAI=false, skip ALL AI services and go directly to Bogus generation
+        if (!useAI)
+        {
+            _logger.Information("UseAI=false, using Bogus data generation directly");
+            return GenerateBogusDataWithConstraints(databaseInfo, desiredRecordCount, sqlQuery, comprehensiveConstraints, databaseType);
+        }
+        
         // 🚀 NEW: Try AI-enhanced generation first if available and enabled
         if (useAI && _aiEnhancedGenerator != null)
         {
@@ -126,7 +140,7 @@ public class DataGenService
         }
 
         _logger.Information("Falling back to Bogus data generation with SQL requirements and comprehensive constraints");
-        return GenerateBogusDataWithConstraints(databaseInfo, desiredRecordCount, sqlQuery, comprehensiveConstraints);
+        return GenerateBogusDataWithConstraints(databaseInfo, desiredRecordCount, sqlQuery, comprehensiveConstraints, databaseType);
     }
 
     /// <summary>
@@ -161,27 +175,60 @@ public class DataGenService
         return isComplex;
     }
 
-    public List<InsertStatement> GenerateBogusDataWithConstraints(DatabaseInfo databaseInfo, int recordCount, string sqlQuery = "", ComprehensiveConstraints? comprehensiveConstraints = null)
+    /// <summary>
+    /// Generate Bogus data with comprehensive constraints and database type support
+    /// </summary>
+    private List<InsertStatement> GenerateBogusDataWithConstraints(
+        DatabaseInfo databaseInfo, 
+        int recordCount, 
+        string sqlQuery, 
+        ComprehensiveConstraints? comprehensiveConstraints,
+        string databaseType = "")
     {
-        if (comprehensiveConstraints != null)
-        {
-            _logger.Information("Generating Bogus data with comprehensive constraint awareness");
-            Console.WriteLine($"[DataGenService] Using comprehensive constraints: {comprehensiveConstraints.GetTotalCount()} total constraints");
-            
-            // Log constraint details for debugging
-            Console.WriteLine($"[DataGenService] LIKE Patterns: {comprehensiveConstraints.LikePatterns.Count}");
-            Console.WriteLine($"[DataGenService] JOIN Constraints: {comprehensiveConstraints.JoinConstraints.Count}");
-            Console.WriteLine($"[DataGenService] Boolean Constraints: {comprehensiveConstraints.BooleanConstraints.Count}");
-            Console.WriteLine($"[DataGenService] Date Constraints: {comprehensiveConstraints.DateConstraints.Count}");
-        }
+        // 🔧 CRITICAL FIX: Use appropriate dialect handler based on database type
+        var dialectHandler = CreateDialectHandler(databaseType, databaseInfo.Type);
+        var insertBuilder = new CommonInsertBuilder(dialectHandler);
         
-        return GenerateBogusData(databaseInfo, recordCount, sqlQuery, comprehensiveConstraints);
+        _logger.Information("Using dialect handler: {DialectType} for database type: {DatabaseType}", 
+            dialectHandler.GetType().Name, databaseType);
+        
+        return GenerateBogusData(databaseInfo, recordCount, sqlQuery, comprehensiveConstraints, insertBuilder);
     }
 
-    public List<InsertStatement> GenerateBogusData(DatabaseInfo databaseInfo, int recordCount, string sqlQuery = "", ComprehensiveConstraints? comprehensiveConstraints = null)
+    /// <summary>
+    /// Create appropriate dialect handler based on database type
+    /// </summary>
+    private ISqlDialectHandler CreateDialectHandler(string databaseType, DatabaseType dbType)
+    {
+        // Try to parse from string first
+        if (!string.IsNullOrEmpty(databaseType))
+        {
+            if (databaseType.Equals("Oracle", StringComparison.OrdinalIgnoreCase))
+            {
+                return new OracleDialectHandler();
+            }
+            if (databaseType.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
+            {
+                return new MySqlDialectHandler();
+            }
+        }
+        
+        // Fall back to DatabaseType enum
+        return dbType switch
+        {
+            DatabaseType.Oracle => new OracleDialectHandler(),
+            DatabaseType.MySQL => new MySqlDialectHandler(),
+            _ => new MySqlDialectHandler() // Default fallback
+        };
+    }
+
+    public List<InsertStatement> GenerateBogusData(DatabaseInfo databaseInfo, int recordCount, string sqlQuery = "", ComprehensiveConstraints? comprehensiveConstraints = null, CommonInsertBuilder? insertBuilder = null)
     {
         var insertStatements = new List<InsertStatement>();
         var faker = new Faker();
+        
+        // Use provided insertBuilder or default one
+        var builder = insertBuilder ?? _insertBuilder;
         
         // 🚀 NEW: Parse SQL query to extract WHERE conditions and requirements
         var sqlRequirements = _queryParser.ParseQuery(sqlQuery);
@@ -214,22 +261,12 @@ public class DataGenService
 
         foreach (var table in tables)
         {
-            Console.WriteLine($"[DEBUG] Table {table.TableName} has {table.Columns.Count} columns:");
+            // 🎯 FIXED: Use GetInsertableColumns to properly filter generated/identity columns
+            var columns = builder.GetInsertableColumns(table);
             
-            // 🎯 DEBUG: Log each column filtering process
-            foreach (var col in table.Columns)
-            {
-                Console.WriteLine($"[DEBUG] Column: {col.ColumnName}, IsIdentity: {col.IsIdentity}, IsGenerated: {col.IsGenerated}, DefaultValue: '{col.DefaultValue}'");
-            }
-            
-            // 🎯 FIXED: Use CommonInsertBuilder for consistent column filtering  
-            var columns = _insertBuilder.GetInsertableColumns(table);
-            Console.WriteLine($"[DEBUG-T021] Filtered columns for {table.TableName}: {columns.Count} columns (from {table.Columns.Count} total)");
-            Console.WriteLine($"[DEBUG-T021] Excluded columns: {string.Join(", ", table.Columns.Where(c => c.IsIdentity || c.IsGenerated).Select(c => $"{c.ColumnName}(Identity:{c.IsIdentity},Generated:{c.IsGenerated})"))}");
-            Console.WriteLine($"[DEBUG-T021] Included columns: {string.Join(", ", columns.Select(c => c.ColumnName))}");
-            
-            var tableRecordCount = ShouldGenerateDataForQueryRequirements(sqlQuery, table.TableName, 0, recordCount) ? recordCount : recordCount;
-            var values = new List<string>();
+            var tableRecordCount = actualRecordCount;
+            _logger.Information("Generating {RecordCount} records for table {TableName} with {ColumnCount} columns", 
+                tableRecordCount, table.TableName, columns.Count);
 
             // 🎯 GENERIC junction table detection (no hardcode table names)
             if (IsJunctionTable(table))
@@ -248,7 +285,21 @@ public class DataGenService
                     // Add non-FK columns
                     foreach (var column in nonFkColumns)
                     {
-                        allValues.Add(GenerateBogusValue(faker, column, i, databaseInfo, tableRecordCount, sqlQuery, table.TableName, sqlRequirements, comprehensiveConstraints));
+                        var value = GenerateBogusValue(faker, column, i, databaseInfo, tableRecordCount, sqlQuery, table.TableName, sqlRequirements, comprehensiveConstraints);
+                        
+                        // 🔧 FIX: Properly format DateTime objects to avoid culture-dependent formatting
+                        string formattedValue;
+                        if (value is DateTime dateTimeValue)
+                        {
+                            formattedValue = dateTimeValue.ToString("yyyy-MM-dd HH:mm:ss");
+                            Console.WriteLine($"[DEBUG-DATE-FORMAT-JUNCTION] {table.TableName}.{column.ColumnName}: DateTime '{dateTimeValue}' -> Formatted '{formattedValue}'");
+                        }
+                        else
+                        {
+                            formattedValue = value.ToString();
+                        }
+                        
+                        allValues.Add(formattedValue);
                     }
                     
                     // Reorder columns to match FK columns first  
@@ -256,8 +307,8 @@ public class DataGenService
                     orderedColumns.AddRange(foreignKeyColumns);
                     orderedColumns.AddRange(nonFkColumns);
                     
-                    // 🎯 FIXED: Use CommonInsertBuilder for consistent INSERT generation
-                    var sql = _insertBuilder.BuildInsertStatement(table.TableName, orderedColumns, allValues, databaseInfo.Type);
+                    // 🎯 FIXED: Use provided CommonInsertBuilder with correct dialect
+                    var sql = builder.BuildInsertStatement(table.TableName, orderedColumns, allValues, databaseInfo.Type);
                     
                     Console.WriteLine($"[DEBUG] Generated SQL for {table.TableName}: {sql}");
                     
@@ -279,20 +330,33 @@ public class DataGenService
                     foreach (var column in columns)
                     {
                         var value = GenerateBogusValue(faker, column, i, databaseInfo, tableRecordCount, sqlQuery, table.TableName, sqlRequirements, comprehensiveConstraints);
-                        columnValues.Add(value);
+                        
+                        // 🔧 FIX: Properly format DateTime objects to avoid culture-dependent formatting
+                        string formattedValue;
+                        if (value is DateTime dateTimeValue)
+                        {
+                            formattedValue = dateTimeValue.ToString("yyyy-MM-dd HH:mm:ss");
+                            Console.WriteLine($"[DEBUG-DATE-FORMAT] {table.TableName}.{column.ColumnName}: DateTime '{dateTimeValue}' -> Formatted '{formattedValue}'");
+                        }
+                        else
+                        {
+                            formattedValue = value.ToString();
+                        }
+                        
+                        columnValues.Add(formattedValue);
                         
                         // Track primary key values for FK references
                         if (column.IsPrimaryKey && column.DataType.ToLower().Contains("int"))
                         {
-                            if (int.TryParse(value, out int pkValue))
+                            if (int.TryParse(formattedValue, out int pkValue))
                             {
                                 generatedPrimaryKeys[table.TableName].Add(pkValue);
                             }
                         }
                     }
-
-                    // 🎯 FIXED: Use CommonInsertBuilder for consistent INSERT generation
-                    var sql = _insertBuilder.BuildInsertStatement(table.TableName, columns, columnValues, databaseInfo.Type);
+                    
+                    // 🎯 FIXED: Use provided CommonInsertBuilder with correct dialect
+                    var sql = builder.BuildInsertStatement(table.TableName, columns, columnValues, databaseInfo.Type);
                     
                     // DEBUG: Log the generated SQL
                     Console.WriteLine($"[DEBUG-T021] Generated SQL for {table.TableName}: {sql}");
@@ -441,7 +505,7 @@ public class DataGenService
 
     // 🎯 REMOVED: QuoteIdentifier method - now handled by CommonInsertBuilder
 
-    private string GenerateBogusValue(Faker faker, ColumnSchema column, int recordIndex, DatabaseInfo databaseInfo, int recordCount, string sqlQuery, string tableName, SqlDataRequirements sqlRequirements, ComprehensiveConstraints? comprehensiveConstraints = null)
+    private object GenerateBogusValue(Faker faker, ColumnSchema column, int recordIndex, DatabaseInfo databaseInfo, int recordCount, string sqlQuery, string tableName, SqlDataRequirements sqlRequirements, ComprehensiveConstraints? comprehensiveConstraints = null)
     {
         // 🎯 NEW: Check comprehensive constraints first
         if (comprehensiveConstraints != null)
@@ -464,8 +528,8 @@ public class DataGenService
 
             if (fk != null)
             {
-                // FIXED: Use actual recordCount parameter for safe FK generation
-                // Generate FK value within the valid range (1 to recordCount)
+                // 🔧 CRITICAL FIX: Generate FK value that references valid primary key range
+                // Primary keys are sequential: 1,2,3,4,5... so FK should be in same range
                 var fkValue = (recordIndex % recordCount) + 1;
                 
                 // Safety clamp: ensure FK value is within valid range [1, recordCount]
@@ -498,7 +562,7 @@ public class DataGenService
             "int" or "integer" or "bigint" or "smallint" or "tinyint" => GenerateIntValue(faker, column, recordIndex, sqlRequirements, tableName),
             "decimal" or "numeric" or "float" or "double" or "money" => GenerateDecimalValue(faker, column),
             "varchar" or "nvarchar" or "text" or "char" or "nchar" or "string" => GenerateStringValue(faker, column, recordIndex, sqlQuery, tableName, sqlRequirements),
-            "datetime" or "datetime2" or "date" or "timestamp" => GenerateDateValue(faker, column, sqlQuery, tableName, sqlRequirements),
+            "datetime" or "datetime2" or "date" or "timestamp" => GenerateDateValue(faker, column, sqlQuery, tableName, sqlRequirements), // 🔧 FIX: Return DateTime object for proper Oracle formatting
             "bit" or "boolean" or "bool" => GenerateBooleanValue(faker, recordIndex, column, tableName, sqlQuery),
             "uniqueidentifier" or "uuid" => $"'{Guid.NewGuid()}'",
             "json" or "jsonb" => GenerateJsonValue(faker, column, recordIndex),
@@ -511,24 +575,32 @@ public class DataGenService
     {
         var columnName = column.ColumnName.ToLower();
         
-        // 🎯 Check SQL requirements first
-        var columnRequirement = GetColumnRequirement(tableName, columnName, sqlRequirements);
-        
-        if (columnRequirement != null)
+        // Primary key generation
+        if (column.IsPrimaryKey)
         {
-            return GenerateIntForRequirement(faker, columnRequirement);
+            return recordIndex.ToString();  // No quotes for NUMBER
         }
         
-        if (columnName.Contains("age"))
-            return faker.Random.Int(18, 65).ToString();
+        // Boolean-like NUMBER(1) columns
+        if (column.NumericPrecision == 1 && column.NumericScale == 0)
+        {
+            return faker.Random.Bool() ? "1" : "0";  // No quotes for NUMBER
+        }
         
-        if (columnName.Contains("count"))
-            return faker.Random.Int(1, 1000).ToString();
-            
-        if (columnName.Contains("level"))
-            return faker.Random.Int(1, 10).ToString();
-
-        return faker.Random.Int(1, 100).ToString();
+        // Age columns
+        if (columnName.Contains("age"))
+        {
+            return faker.Random.Int(18, 65).ToString();  // No quotes for NUMBER
+        }
+        
+        // ID-related columns
+        if (columnName.Contains("id") && !column.IsPrimaryKey)
+        {
+            return faker.Random.Int(1, 1000).ToString();  // No quotes for NUMBER
+        }
+        
+        // Default random integer
+        return faker.Random.Int(1, 10000).ToString();  // No quotes for NUMBER
     }
 
     /// <summary>
@@ -909,51 +981,46 @@ public class DataGenService
         return input.Replace("'", "''");
     }
 
-    private string GenerateDateValue(Faker faker, ColumnSchema column, string sqlQuery, string tableName, SqlDataRequirements sqlRequirements)
+    private DateTime GenerateDateValue(Faker faker, ColumnSchema column, string sqlQuery, string tableName, SqlDataRequirements sqlRequirements)
     {
         var columnName = column.ColumnName.ToLower();
+        var dataType = column.DataType?.ToUpper() ?? "";
         
-        // 🎯 SMART DATA GENERATION: Check SQL requirements first
-        var columnRequirement = GetColumnRequirement(tableName, columnName, sqlRequirements);
-        
-        if (columnRequirement != null)
-        {
-            return GenerateDateForRequirement(faker, columnRequirement, columnName);
-        }
-        
-        if (columnName.Contains("birth"))
-        {
-            return $"'{faker.Date.Between(DateTime.Now.AddYears(-65), DateTime.Now.AddYears(-18)):yyyy-MM-dd}'";
-        }
-            
-        if (columnName.Contains("hire") || columnName.Contains("start"))
-            return $"'{faker.Date.Between(DateTime.Now.AddYears(-10), DateTime.Now):yyyy-MM-dd HH:mm:ss}'";
-            
-        if (columnName.Contains("created"))
-            return $"'{faker.Date.Recent(365):yyyy-MM-dd HH:mm:ss}'";
-            
-        if (columnName.Contains("updated") || columnName.Contains("modified"))
-            return $"'{faker.Date.Recent(30):yyyy-MM-dd HH:mm:ss}'";
-
-        // 🎯 GENERIC FIX: Check if this column has DATE_WITHIN_DAYS requirement from WHERE clause
-        var dateRequirement = GetColumnRequirement(tableName, column.ColumnName, sqlRequirements);
-        if (dateRequirement?.Operator == "DATE_WITHIN_DAYS")
-        {
-            var withinDaysResult = GenerateDateWithinDays(faker, dateRequirement.Value);
-            Console.WriteLine($"[DATE-AWARE] {tableName}.{column.ColumnName}: Generated {withinDaysResult} for DATE_WITHIN_DAYS {dateRequirement.Value} requirement");
-            return withinDaysResult;
-        }
+        DateTime dateValue;
         
         // Fallback: Generate near-future dates for columns with "expires" in name
         if (columnName.Contains("expires"))
         {
-            // Generate expires dates within next 60 days as reasonable default
-            var futureDate = faker.Date.Between(DateTime.Now.AddDays(1), DateTime.Now.AddDays(50));
-            Console.WriteLine($"[DATE-FALLBACK] {tableName}.{columnName}: Generated {futureDate:yyyy-MM-dd HH:mm:ss} (within 60 days default)");
-            return $"'{futureDate:yyyy-MM-dd HH:mm:ss}'";
+            dateValue = faker.Date.Between(DateTime.Now.AddDays(1), DateTime.Now.AddDays(50));
+            Console.WriteLine($"[DATE-FALLBACK] {tableName}.{columnName}: Generated {dateValue:yyyy-MM-dd HH:mm:ss} (expires)");
         }
-
-        return $"'{faker.Date.Recent(365):yyyy-MM-dd HH:mm:ss}'";
+        // Birth date columns
+        else if (columnName.Contains("birth") || columnName.Contains("dob"))
+        {
+            dateValue = faker.Date.Between(DateTime.Now.AddYears(-65), DateTime.Now.AddYears(-18));
+            Console.WriteLine($"[DATE-FALLBACK] {tableName}.{columnName}: Generated {dateValue:yyyy-MM-dd} (birth)");
+        }
+        // Created/Added columns - past dates
+        else if (columnName.Contains("created") || columnName.Contains("added") || columnName.Contains("hired") || columnName.Contains("start"))
+        {
+            dateValue = faker.Date.Between(DateTime.Now.AddDays(-365), DateTime.Now);
+            Console.WriteLine($"[DATE-FALLBACK] {tableName}.{columnName}: Generated {dateValue:yyyy-MM-dd HH:mm:ss} (created)");
+        }
+        // Updated/Modified columns - recent dates
+        else if (columnName.Contains("updated") || columnName.Contains("modified") || columnName.Contains("last"))
+        {
+            dateValue = faker.Date.Between(DateTime.Now.AddDays(-30), DateTime.Now);
+            Console.WriteLine($"[DATE-FALLBACK] {tableName}.{columnName}: Generated {dateValue:yyyy-MM-dd HH:mm:ss} (updated)");
+        }
+        // Default: random recent date
+        else
+        {
+            dateValue = faker.Date.Between(DateTime.Now.AddDays(-365), DateTime.Now.AddDays(30));
+            Console.WriteLine($"[DATE-FALLBACK] {tableName}.{columnName}: Generated {dateValue:yyyy-MM-dd HH:mm:ss} (default)");
+        }
+        
+        // Return DateTime object for CommonInsertBuilder.FormatValue to handle database-specific formatting
+        return dateValue;
     }
 
     /// <summary>
@@ -967,12 +1034,13 @@ public class DataGenService
             "DATE_WITHIN_DAYS" => GenerateDateWithinDays(faker, requirement.Value),
             ">" or ">=" => GenerateDateAfter(faker, requirement.Value),
             "<" or "<=" => GenerateDateBefore(faker, requirement.Value),
-            _ => $"'{faker.Date.Recent(365):yyyy-MM-dd HH:mm:ss}'"
+            _ => faker.Date.Recent(365).ToString("yyyy-MM-dd HH:mm:ss") // Return raw datetime string for FormatValue to handle
         };
     }
 
     /// <summary>
     /// Generate date for YEAR(column) = year condition
+    /// FIXED: Return raw datetime string instead of quoted string for Oracle dialect handler
     /// </summary>
     private string GenerateYearEqualsDate(Faker faker, string year, string columnName)
     {
@@ -983,74 +1051,94 @@ public class DataGenService
             var endDate = new DateTime(targetYear, 12, 31);
             var randomDate = faker.Date.Between(startDate, endDate);
             
+            // Return raw datetime string - let CommonInsertBuilder.FormatValue handle Oracle/MySQL formatting
             return columnName.Contains("birth") ? 
-                $"'{randomDate:yyyy-MM-dd}'" : 
-                $"'{randomDate:yyyy-MM-dd HH:mm:ss}'";
+                randomDate.ToString("yyyy-MM-dd") : 
+                randomDate.ToString("yyyy-MM-dd HH:mm:ss");
         }
         
-        return $"'{faker.Date.Recent(365):yyyy-MM-dd}'";
+        return faker.Date.Recent(365).ToString("yyyy-MM-dd");
     }
 
     /// <summary>
     /// Generate date within specified days from now
+    /// FIXED: Return raw datetime string for Oracle dialect handler
     /// </summary>
     private string GenerateDateWithinDays(Faker faker, string days)
     {
         if (int.TryParse(days, out int dayCount))
         {
             var futureDate = faker.Date.Between(DateTime.Now, DateTime.Now.AddDays(dayCount));
-            return $"'{futureDate:yyyy-MM-dd HH:mm:ss}'";
+            return futureDate.ToString("yyyy-MM-dd HH:mm:ss");
         }
         
-        return $"'{faker.Date.Future():yyyy-MM-dd HH:mm:ss}'";
+        return faker.Date.Future().ToString("yyyy-MM-dd HH:mm:ss");
     }
 
     /// <summary>
     /// Generate date after specified date
+    /// FIXED: Return raw datetime string for Oracle dialect handler
     /// </summary>
     private string GenerateDateAfter(Faker faker, string dateValue)
     {
         if (DateTime.TryParse(dateValue, out DateTime minDate))
         {
             var futureDate = faker.Date.Between(minDate.AddDays(1), minDate.AddYears(1));
-            return $"'{futureDate:yyyy-MM-dd HH:mm:ss}'";
+            return futureDate.ToString("yyyy-MM-dd HH:mm:ss");
         }
         
-        return $"'{faker.Date.Future():yyyy-MM-dd HH:mm:ss}'";
+        return faker.Date.Future().ToString("yyyy-MM-dd HH:mm:ss");
     }
 
     /// <summary>
     /// Generate date before specified date
+    /// FIXED: Return raw datetime string for Oracle dialect handler
     /// </summary>
     private string GenerateDateBefore(Faker faker, string dateValue)
     {
         if (DateTime.TryParse(dateValue, out DateTime maxDate))
         {
             var pastDate = faker.Date.Between(maxDate.AddYears(-1), maxDate.AddDays(-1));
-            return $"'{pastDate:yyyy-MM-dd HH:mm:ss}'";
+            return pastDate.ToString("yyyy-MM-dd HH:mm:ss");
         }
         
-        return $"'{faker.Date.Past():yyyy-MM-dd HH:mm:ss}'";
+        return faker.Date.Past().ToString("yyyy-MM-dd HH:mm:ss");
     }
 
     private string GenerateBooleanValue(Faker faker, int recordIndex, ColumnSchema column, string tableName, string sqlQuery)
     {
-        // For MySQL, use 1/0 instead of true/false
-        // 🎯 GENERIC FIX: Query-aware boolean generation for ANY table/column based on WHERE conditions
+        // For Oracle, boolean is typically NUMBER(1) with 0/1 values
+        var columnName = column.ColumnName.ToLower();
         
-        // Parse SQL requirements to find constraints for this column
-        var sqlRequirements = _queryParser.ParseQuery(sqlQuery);
-        var columnRequirement = GetColumnRequirement(tableName, column.ColumnName, sqlRequirements);
+        // Default probability
+        var trueProbability = 0.8f; // 80% true by default
         
-        if (columnRequirement != null)
+        // Check if there are WHERE conditions affecting this boolean column
+        var wherePattern = $@"\b{Regex.Escape(tableName)}\.\s*{Regex.Escape(columnName)}\s*=\s*(0|1|true|false)";
+        var whereMatch = Regex.Match(sqlQuery, wherePattern, RegexOptions.IgnoreCase);
+        
+        if (whereMatch.Success)
         {
-            // Generate boolean based on WHERE condition operator (GENERIC approach)
-            return GenerateBooleanForRequirement(faker, columnRequirement, column, tableName);
+            var requiredValue = whereMatch.Groups[1].Value.ToLower();
+            return requiredValue switch
+            {
+                "1" or "true" => "1",  // No quotes for NUMBER
+                "0" or "false" => "0",  // No quotes for NUMBER
+                _ => faker.Random.Float() < trueProbability ? "1" : "0"  // No quotes for NUMBER
+            };
         }
         
-        // Default: Generate more TRUE values for general boolean columns (80% true rate)
-        var shouldBeTrue = faker.Random.Double() < 0.8;
-        return shouldBeTrue ? "1" : "0";
+        // Generate based on column semantics
+        if (columnName.Contains("active") || columnName.Contains("enabled"))
+        {
+            trueProbability = 0.9f; // 90% active/enabled
+        }
+        else if (columnName.Contains("deleted") || columnName.Contains("disabled"))
+        {
+            trueProbability = 0.1f; // 10% deleted/disabled
+        }
+        
+        return faker.Random.Float() < trueProbability ? "1" : "0";  // No quotes for NUMBER
     }
     
     /// <summary>
@@ -1250,24 +1338,97 @@ public class DataGenService
     {
         Console.WriteLine($"[DEBUG] GenerateDefaultValue called for: {column.ColumnName} ({column.DataType}) - this shouldn't happen often");
         
-        if (column.DataType.ToLower().Contains("int"))
-            return recordIndex.ToString();
+        var dataType = column.DataType?.ToUpper() ?? "";
+        var columnName = column.ColumnName?.ToLower() ?? "";
         
-        // 🎯 FIXED: Respect MaxLength constraint for ANY column    
-        var maxLength = Math.Max(1, column.MaxLength ?? 50);
-        var baseValue = $"Value_{recordIndex}";
-        
-        if (baseValue.Length > maxLength)
+        // Oracle-specific handling
+        if (dataType.Contains("NUMBER"))
         {
-            var shortValue = $"V{recordIndex}";
-            if (shortValue.Length > maxLength)
+            // Check if it's a boolean-like column
+            if (columnName.Contains("is_") || columnName.Contains("active") || 
+                columnName.Contains("enabled") || columnName.Contains("flag"))
             {
-                shortValue = faker.Random.AlphaNumeric(Math.Min(maxLength, 5));
+                return faker.Random.Bool() ? "1" : "0";  // No quotes for NUMBER
             }
-            return $"'{shortValue}'";
+            // Check if precision indicates boolean (NUMBER(1))
+            if (column.NumericPrecision == 1 && column.NumericScale == 0)
+            {
+                return faker.Random.Bool() ? "1" : "0";  // No quotes for NUMBER
+            }
+            return recordIndex.ToString();  // No quotes for NUMBER
         }
         
-        return $"'{baseValue}'";
+        if (dataType.Contains("TIMESTAMP") || dataType.Contains("DATE"))
+        {
+            var dateValue = "";
+            if (columnName.Contains("birth"))
+            {
+                dateValue = faker.Date.Between(DateTime.Now.AddYears(-65), DateTime.Now.AddYears(-18)).ToString("yyyy-MM-dd");
+            }
+            else if (columnName.Contains("created") || columnName.Contains("added"))
+            {
+                dateValue = faker.Date.Recent(365).ToString("yyyy-MM-dd HH:mm:ss");
+            }
+            else if (columnName.Contains("updated") || columnName.Contains("modified"))
+            {
+                dateValue = faker.Date.Recent(30).ToString("yyyy-MM-dd HH:mm:ss");
+            }
+            else if (columnName.Contains("expires"))
+            {
+                dateValue = faker.Date.Future(30).ToString("yyyy-MM-dd HH:mm:ss");
+            }
+            else
+            {
+                dateValue = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            }
+            
+            // Return Oracle TO_TIMESTAMP format for TIMESTAMP columns
+            if (dataType.Contains("TIMESTAMP"))
+            {
+                return $"TO_TIMESTAMP('{dateValue}', 'YYYY-MM-DD HH24:MI:SS')";
+            }
+            else
+            {
+                return $"TO_DATE('{dateValue}', 'YYYY-MM-DD')";
+            }
+        }
+        
+        if (dataType.Contains("VARCHAR2") || dataType.Contains("CHAR") || dataType.Contains("CLOB"))
+        {
+            var maxLength = Math.Max(1, column.MaxLength ?? 50);
+            var baseValue = $"Value_{recordIndex}";
+            
+            if (baseValue.Length > maxLength)
+            {
+                var shortValue = $"V{recordIndex}";
+                if (shortValue.Length > maxLength)
+                {
+                    shortValue = faker.Random.AlphaNumeric(Math.Min(maxLength, 5));
+                }
+                return $"'{shortValue}'";  // Quotes for VARCHAR2/CHAR
+            }
+            
+            return $"'{baseValue}'";  // Quotes for VARCHAR2/CHAR
+        }
+        
+        // Legacy handling for other databases
+        if (dataType.ToLower().Contains("int"))
+            return recordIndex.ToString();  // No quotes for INT
+        
+        // Final fallback - ensure we never return empty string
+        var fallbackMaxLength = Math.Max(1, column.MaxLength ?? 50);
+        var fallbackValue = $"Default_{recordIndex}";
+        
+        if (fallbackValue.Length > fallbackMaxLength)
+        {
+            fallbackValue = $"D{recordIndex}";
+            if (fallbackValue.Length > fallbackMaxLength)
+            {
+                fallbackValue = faker.Random.AlphaNumeric(Math.Min(fallbackMaxLength, 5));
+            }
+        }
+        
+        return $"'{fallbackValue}'";  // Quotes for string fallback
     }
 
     /// <summary>
@@ -1516,7 +1677,8 @@ public class DataGenService
                     var startDate = new DateTime(year, 1, 1);
                     var endDate = new DateTime(year, 12, 31);
                     var randomDate = faker.Date.Between(startDate, endDate);
-                    return $"'{randomDate:yyyy-MM-dd}'";
+                    // FIXED: Return raw datetime string for Oracle dialect handler to process
+                    return randomDate.ToString("yyyy-MM-dd");
                 }
             }
         }

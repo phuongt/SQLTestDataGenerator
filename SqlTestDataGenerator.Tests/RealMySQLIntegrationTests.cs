@@ -20,7 +20,7 @@ public class RealMySQLIntegrationTests
     [TestInitialize]
     public void Setup()
     {
-        _engineService = new EngineService();
+        _engineService = new EngineService(DatabaseType.MySQL, REAL_MYSQL_CONNECTION);
     }
 
     [TestMethod]

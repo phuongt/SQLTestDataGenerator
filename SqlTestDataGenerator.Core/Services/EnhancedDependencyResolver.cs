@@ -157,36 +157,8 @@ public class EnhancedDependencyResolver
     
     private List<string> ExtractTablesFromQuery(string sqlQuery)
     {
-        var tables = new List<string>();
-        var cleanSql = RemoveStringsAndComments(sqlQuery);
-        
-        // FROM clause
-        var fromPattern = @"\bFROM\s+(?:(?:\w+\.)?(\w+)|\[([^\]]+)\]|`([^`]+)`)(?:\s+(?:AS\s+)?(\w+))?";
-        var fromMatches = Regex.Matches(cleanSql, fromPattern, RegexOptions.IgnoreCase);
-        
-        foreach (Match match in fromMatches)
-        {
-            var tableName = match.Groups[1].Value ?? match.Groups[2].Value ?? match.Groups[3].Value;
-            if (!string.IsNullOrEmpty(tableName))
-            {
-                tables.Add(tableName);
-            }
-        }
-        
-        // JOIN clauses
-        var joinPattern = @"\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|OUTER\s+)?JOIN\s+(?:(?:\w+\.)?(\w+)|\[([^\]]+)\]|`([^`]+)`)(?:\s+(?:AS\s+)?(\w+))?";
-        var joinMatches = Regex.Matches(cleanSql, joinPattern, RegexOptions.IgnoreCase);
-        
-        foreach (Match match in joinMatches)
-        {
-            var tableName = match.Groups[1].Value ?? match.Groups[2].Value ?? match.Groups[3].Value;
-            if (!string.IsNullOrEmpty(tableName))
-            {
-                tables.Add(tableName);
-            }
-        }
-        
-        return tables.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // Use the fixed table extraction logic from SqlMetadataService
+        return SqlMetadataService.ExtractTablesFromQuery(sqlQuery);
     }
     
     private List<string> ExtractWhereConditions(string sqlQuery)

@@ -24,7 +24,7 @@ namespace SqlTestDataGenerator.Tests
             Console.WriteLine("=== SIMPLE WORKFLOW TEST SETUP ===");
             
             // Initialize engine service
-            _engineService = new EngineService("AIzaSyCsOzujfOGEBwBvbCdPsKw8Cf16bb0iTJM");
+            _engineService = new EngineService(DatabaseType.MySQL, _connectionString, "AIzaSyCsOzujfOGEBwBvbCdPsKw8Cf16bb0iTJM");
             
             // Create simple test database
             await CreateSimpleTestDatabase();

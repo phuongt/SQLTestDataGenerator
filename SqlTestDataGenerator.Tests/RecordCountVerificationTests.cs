@@ -19,7 +19,7 @@ public class RecordCountVerificationTests
     public async Task ExecuteQueryWithTestDataAsync_RequestedRecordCount_ShouldGenerateCorrectAmountOfData()
     {
         // Arrange
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, TestConnectionString);
         var request = new QueryExecutionRequest
         {
             SqlQuery = @"
@@ -43,8 +43,9 @@ public class RecordCountVerificationTests
         Assert.IsTrue(result.GeneratedInserts.Count > 0, "Should generate INSERT statements");
         Console.WriteLine($"📊 Generated {result.GeneratedInserts.Count} total INSERT statements");
         
-        // Verify records were actually inserted
-        Assert.IsTrue(result.GeneratedRecords > 0, $"Should insert records. Generated: {result.GeneratedRecords}");
+        // Verify exact record count was generated
+        Assert.AreEqual(request.DesiredRecordCount, result.GeneratedRecords, 
+            $"Generated records ({result.GeneratedRecords}) MUST exactly match desired count ({request.DesiredRecordCount})");
         Console.WriteLine($"📊 Inserted {result.GeneratedRecords} records into database");
         
         // Verify query execution
@@ -69,7 +70,7 @@ public class RecordCountVerificationTests
     public async Task ExecuteQueryWithTestDataAsync_SmallRecordCount_ShouldRespectMinimumRecords()
     {
         // Arrange
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, TestConnectionString);
         var request = new QueryExecutionRequest
         {
             SqlQuery = @"SELECT c.id, c.name, c.code FROM companies c WHERE c.name LIKE '%Test%'",
@@ -89,9 +90,10 @@ public class RecordCountVerificationTests
         Console.WriteLine($"📊 Generated {result.GeneratedInserts.Count} INSERT statements for single table");
         Console.WriteLine($"📊 Query returned {result.ResultData.Rows.Count} rows");
         
-        // Should execute successfully regardless of exact count
+        // Should execute successfully with exact count
         Assert.IsNotNull(result.ResultData, "Should return result data");
-        Assert.IsTrue(result.GeneratedRecords >= 3, "Should generate at least the requested number of records");
+        Assert.AreEqual(request.DesiredRecordCount, result.GeneratedRecords, 
+            $"Generated records ({result.GeneratedRecords}) MUST exactly match desired count ({request.DesiredRecordCount})");
     }
     
     [TestMethod] 
@@ -100,7 +102,7 @@ public class RecordCountVerificationTests
     public async Task ExecuteQueryWithTestDataAsync_LargeRecordCount_ShouldHandleEfficiently()
     {
         // Arrange
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, TestConnectionString);
         var request = new QueryExecutionRequest
         {
             SqlQuery = @"SELECT u.id, u.username, u.email FROM users u WHERE u.email IS NOT NULL",
@@ -123,8 +125,8 @@ public class RecordCountVerificationTests
         Assert.IsTrue(result.ExecutionTime.TotalSeconds < 45, 
             $"Should handle large counts efficiently. Took {result.ExecutionTime.TotalSeconds}s");
         
-        // Should generate adequate data
-        Assert.IsTrue(result.GeneratedRecords >= 25, 
-            $"Should generate at least {request.DesiredRecordCount} records. Generated: {result.GeneratedRecords}");
+        // Should generate exact data count
+        Assert.AreEqual(request.DesiredRecordCount, result.GeneratedRecords, 
+            $"Generated records ({result.GeneratedRecords}) MUST exactly match desired count ({request.DesiredRecordCount})");
     }
 } 

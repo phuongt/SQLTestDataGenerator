@@ -16,13 +16,13 @@ public class FullWorkflowIntegrationTests
 {
     private EngineService? _engineService;
     private string _connectionString = "Server=localhost;Port=3306;Database=my_database;Uid=root;Pwd=22092012;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;Connection Lifetime=300;Pooling=true;Min Pool Size=0;Max Pool Size=10;";
-    private const string DatabaseType = "MySQL";
+    private const string DatabaseTypeString = "MySQL";
 
     [TestInitialize]
     public void Setup()
     {
         Console.WriteLine("=== FullWorkflow Integration Test Setup ===");
-        _engineService = new EngineService("AIzaSyCsOzujfOGEBwBvbCdPsKw8Cf16bb0iTJM");
+        _engineService = new EngineService(DatabaseType.MySQL, _connectionString, "AIzaSyCsOzujfOGEBwBvbCdPsKw8Cf16bb0iTJM");
         
         // Ensure export directory exists
         var exportDir = "sql-exports";
@@ -83,7 +83,7 @@ public class FullWorkflowIntegrationTests
 
         var request = new QueryExecutionRequest
         {
-            DatabaseType = DatabaseType,
+            DatabaseType = DatabaseTypeString,
             ConnectionString = _connectionString,
             SqlQuery = complexSql,
             DesiredRecordCount = 8,
@@ -129,7 +129,7 @@ public class FullWorkflowIntegrationTests
         // ACT PHASE 2: Execute SQL from File (Commit to Database)
         Console.WriteLine("\n=== PHASE 2: Execute SQL from File & Commit to Database ===");
         
-        using var connection = DbConnectionFactory.CreateConnection(DatabaseType, _connectionString);
+        using var connection = DbConnectionFactory.CreateConnection(DatabaseTypeString, _connectionString);
         connection.Open();
         
         // Clear existing data first

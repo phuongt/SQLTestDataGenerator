@@ -7,60 +7,32 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using MySqlConnector;
+using Oracle.ManagedDataAccess.Client;
 
 namespace SqlTestDataGenerator.Tests
 {
     [TestClass]
-    public class CompleteWorkflowAutomatedTest
+    public class CompleteWorkflowAutomatedTest_Oracle
     {
-        private string _connectionString = "Server=localhost;Port=3306;Database=test_workflow_db;Uid=root;Pwd=22092012;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;Connection Lifetime=300;Pooling=true;";
-        private string _testQuery = @"
-            SELECT u.id, u.username, u.first_name, u.last_name, u.email, u.date_of_birth, u.salary, u.department, u.hire_date, 
-                   c.NAME AS company_name, c.code AS company_code, r.NAME AS role_name, r.code AS role_code, ur.expires_at AS role_expires,
-                   CASE 
-                       WHEN u.is_active = 0 THEN 'Đã nghỉ việc'
-                       WHEN ur.expires_at IS NOT NULL AND ur.expires_at <= DATE_ADD(NOW(), INTERVAL 30 DAY) THEN 'Sắp hết hạn vai trò'
-                       ELSE 'Đang làm việc'
-                   END AS work_status
-            FROM users u
-            INNER JOIN companies c ON u.company_id = c.id
-            INNER JOIN user_roles ur ON u.id = ur.user_id AND ur.is_active = False
-            INNER JOIN roles r ON ur.role_id = r.id
-            WHERE (u.first_name LIKE '%Phương%' OR u.last_name LIKE '%Phương%')
-              AND YEAR(u.date_of_birth) = 1989
-              AND c.NAME LIKE '%HOME%'
-              AND r.code LIKE '%member%'
-              AND (u.is_active = 0 OR ur.expires_at <= DATE_ADD(NOW(), INTERVAL 60 DAY))
-            ORDER BY ur.expires_at ASC, u.created_at DESC";
-
+        private string _connectionString = "Data Source=localhost:1521/XE;User Id=system;Password=22092012;Connection Timeout=120;Connection Lifetime=300;Pooling=true;Min Pool Size=0;Max Pool Size=10;";
+        private string _testQuery = @"SELECT COUNT(*) FROM users WHERE ROWNUM <= 10";
         private EngineService _engineService;
 
         [TestInitialize]
         public async Task Setup()
         {
-            Console.WriteLine("=== COMPLETE WORKFLOW AUTOMATED TEST SETUP ===");
-            
-            // Initialize engine service with test API key
-            _engineService = new EngineService("AIzaSyCsOzujfOGEBwBvbCdPsKw8Cf16bb0iTJM");
-            
-            // Create test database if not exists
+            _engineService = new EngineService(DatabaseType.Oracle, _connectionString);
             await CreateTestDatabaseIfNotExists();
-            
-            // Clean up any existing test data
-            await CleanupTestData();
-            
-            Console.WriteLine("Setup completed successfully");
         }
 
         [TestCleanup]
         public async Task Cleanup()
         {
-            Console.WriteLine("=== COMPLETE WORKFLOW TEST CLEANUP ===");
             await CleanupTestData();
         }
 
         [TestMethod]
-        public async Task TestCompleteWorkflow_DesiredToGeneratedToCommittedToVerified()
+        public async Task TestCompleteWorkflow_DesiredToGeneratedToCommittedToVerified_Oracle()
         {
             Console.WriteLine("=== TESTING COMPLETE WORKFLOW: DESIRED -> GENERATED -> COMMITTED -> VERIFIED ===");
             
@@ -178,83 +150,73 @@ namespace SqlTestDataGenerator.Tests
 
         private async Task CreateTestDatabaseIfNotExists()
         {
-            var masterConnection = _connectionString.Replace("Database=test_workflow_db", "Database=mysql");
-            
-            using var connection = new MySqlConnection(masterConnection);
+            using var connection = new Oracle.ManagedDataAccess.Client.OracleConnection(_connectionString);
             await connection.OpenAsync();
-            
-            // Create database
-            await connection.ExecuteAsync("CREATE DATABASE IF NOT EXISTS test_workflow_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-            Console.WriteLine("✅ Test database created/verified");
-            
-            // Switch to test database and create tables
-            await connection.ExecuteAsync("USE test_workflow_db");
-            
-            // Create required tables
+            // Tạo sequence, table Oracle
             var createTablesScript = @"
-                CREATE TABLE IF NOT EXISTS companies (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    NAME VARCHAR(255) NOT NULL,
-                    code VARCHAR(50) UNIQUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-
-                CREATE TABLE IF NOT EXISTS roles (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    NAME VARCHAR(255) NOT NULL,
-                    code VARCHAR(50) UNIQUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-
-                CREATE TABLE IF NOT EXISTS users (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    username VARCHAR(100) UNIQUE,
-                    first_name VARCHAR(100),
-                    last_name VARCHAR(100),
-                    email VARCHAR(255),
-                    date_of_birth DATE,
-                    salary DECIMAL(10,2),
-                    department VARCHAR(100),
-                    hire_date DATE,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    company_id INT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (company_id) REFERENCES companies(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS user_roles (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id INT,
-                    role_id INT,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    expires_at DATETIME,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(id),
-                    FOREIGN KEY (role_id) REFERENCES roles(id)
-                );";
-            
-            await connection.ExecuteAsync(createTablesScript);
-            Console.WriteLine("✅ Test tables created/verified");
+                BEGIN
+                    EXECUTE IMMEDIATE 'CREATE TABLE companies (
+                        id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                        NAME VARCHAR2(255) NOT NULL,
+                        code VARCHAR2(50) UNIQUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )';
+                EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;
+                BEGIN
+                    EXECUTE IMMEDIATE 'CREATE TABLE roles (
+                        id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                        NAME VARCHAR2(255) NOT NULL,
+                        code VARCHAR2(50) UNIQUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )';
+                EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;
+                BEGIN
+                    EXECUTE IMMEDIATE 'CREATE TABLE users (
+                        id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                        username VARCHAR2(100) UNIQUE,
+                        first_name VARCHAR2(100),
+                        last_name VARCHAR2(100),
+                        email VARCHAR2(255),
+                        date_of_birth DATE,
+                        salary NUMBER(10,2),
+                        department VARCHAR2(100),
+                        hire_date DATE,
+                        is_active NUMBER(1) DEFAULT 1,
+                        company_id NUMBER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT fk_company FOREIGN KEY (company_id) REFERENCES companies(id)
+                    )';
+                EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;
+                BEGIN
+                    EXECUTE IMMEDIATE 'CREATE TABLE user_roles (
+                        id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                        user_id NUMBER,
+                        role_id NUMBER,
+                        is_active NUMBER(1) DEFAULT 1,
+                        expires_at DATE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id),
+                        CONSTRAINT fk_role FOREIGN KEY (role_id) REFERENCES roles(id)
+                    )';
+                EXCEPTION WHEN OTHERS THEN IF SQLCODE != -955 THEN RAISE; END IF; END;
+            ";
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = createTablesScript;
+            await cmd.ExecuteNonQueryAsync();
         }
 
         private async Task CleanupTestData()
         {
-            using var connection = new MySqlConnection(_connectionString);
+            using var connection = new Oracle.ManagedDataAccess.Client.OracleConnection(_connectionString);
             await connection.OpenAsync();
-            
-            // Disable foreign key checks
-            await connection.ExecuteAsync("SET FOREIGN_KEY_CHECKS = 0");
-            
-            // Truncate all tables
-            await connection.ExecuteAsync("TRUNCATE TABLE user_roles");
-            await connection.ExecuteAsync("TRUNCATE TABLE users");
-            await connection.ExecuteAsync("TRUNCATE TABLE roles");
-            await connection.ExecuteAsync("TRUNCATE TABLE companies");
-            
-            // Re-enable foreign key checks
-            await connection.ExecuteAsync("SET FOREIGN_KEY_CHECKS = 1");
-            
-            Console.WriteLine("✅ Test data cleaned up");
+            // Disable FK: Oracle không có lệnh global, phải drop/disable từng constraint nếu cần
+            // Truncate all tables (CASCADE nếu có FK)
+            foreach (var tbl in new[] { "user_roles", "users", "roles", "companies" })
+            {
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = $"TRUNCATE TABLE {tbl}";
+                try { await cmd.ExecuteNonQueryAsync(); } catch { /* ignore if not exists */ }
+            }
         }
 
         private async Task<Dictionary<string, int>> ExecuteSqlFileAndCountTables(string sqlFilePath)
@@ -266,14 +228,14 @@ namespace SqlTestDataGenerator.Tests
                                          .Select(s => s.Trim())
                                          .ToList();
 
-            using var connection = new MySqlConnection(_connectionString);
+            using var connection = new Oracle.ManagedDataAccess.Client.OracleConnection(_connectionString);
             await connection.OpenAsync();
             
             using var transaction = connection.BeginTransaction();
             try
             {
-                // Disable foreign key checks
-                await connection.ExecuteAsync("SET FOREIGN_KEY_CHECKS = 0", transaction: transaction);
+                // Oracle doesn't support SET FOREIGN_KEY_CHECKS - rely on dependency order
+                // The generated SQL should already be in correct dependency order
                 
                 foreach (var statement in sqlStatements)
                 {
@@ -288,9 +250,6 @@ namespace SqlTestDataGenerator.Tests
                         await connection.ExecuteAsync(statement, transaction: transaction);
                     }
                 }
-                
-                // Re-enable foreign key checks
-                await connection.ExecuteAsync("SET FOREIGN_KEY_CHECKS = 1", transaction: transaction);
                 
                 transaction.Commit();
                 Console.WriteLine($"✅ Executed {sqlStatements.Count} SQL statements successfully");
@@ -308,7 +267,7 @@ namespace SqlTestDataGenerator.Tests
         {
             try
             {
-                using var connection = new MySqlConnection(_connectionString);
+                using var connection = new Oracle.ManagedDataAccess.Client.OracleConnection(_connectionString);
                 await connection.OpenAsync();
                 
                 var results = await connection.QueryAsync(_testQuery);

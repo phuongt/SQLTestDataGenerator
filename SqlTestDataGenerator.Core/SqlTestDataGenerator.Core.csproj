@@ -21,6 +21,7 @@
     
     <!-- Data generation -->
     <PackageReference Include="Bogus" Version="35.3.0" />
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="23.9.1" />
     
     <!-- Utilities -->
     <PackageReference Include="Polly" Version="8.2.0" />

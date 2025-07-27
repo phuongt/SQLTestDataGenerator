@@ -497,7 +497,7 @@ public class ComplexDataGenerationTests
               AND (u.is_active = 0 OR ur.expires_at <= DATE_ADD(NOW(), INTERVAL 60 DAY))
             ORDER BY ur.expires_at ASC, u.created_at DESC";
 
-        var engineService = new EngineService(); // No AI key for Bogus testing
+        var engineService = new EngineService(DatabaseType.MySQL, "Server=localhost;Database=testdb;Uid=testuser;Pwd=testpass;"); // No AI key for Bogus testing
 
         var request = new QueryExecutionRequest
         {
@@ -537,7 +537,7 @@ public class ComplexDataGenerationTests
         // Arrange - Simple SQL that doesn't require real tables
         var simpleSQL = "SELECT 1 as test_value";
         
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, "Server=localhost;Port=3306;Database=my_database;Uid=root;Pwd=22092012;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;Connection Lifetime=300;Pooling=true;Min Pool Size=0;Max Pool Size=10;");
 
         var request = new QueryExecutionRequest
         {
@@ -575,7 +575,7 @@ public class ComplexDataGenerationTests
     public async Task ExecuteQueryWithTestDataAsync_MySQLConnection_ShouldValidateConnectionString()
     {
         // Arrange
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, "Server=localhost;Port=3306;Database=my_database;Uid=root;Pwd=22092012;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;Connection Lifetime=300;Pooling=true;Min Pool Size=0;Max Pool Size=10;");
 
         var validRequest = new QueryExecutionRequest
         {
@@ -646,7 +646,7 @@ public class ComplexDataGenerationTests
               AND ur.is_active = 1
             ORDER BY u.last_name, c.name";
 
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, "Server=localhost;Database=test;Uid=user;Pwd=pass;");
 
         var request = new QueryExecutionRequest
         {
@@ -687,7 +687,7 @@ public class ComplexDataGenerationTests
     public async Task ExecuteQueryWithTestDataAsync_EmptySQL_ShouldHandleGracefully()
     {
         // Arrange
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, "Server=localhost;Database=test;Uid=user;Pwd=pass;");
 
         var request = new QueryExecutionRequest
         {
@@ -725,7 +725,7 @@ public class ComplexDataGenerationTests
     public async Task ExecuteQueryWithTestDataAsync_Performance_ShouldCompleteWithinTimeout()
     {
         // Arrange
-        var engineService = new EngineService();
+        var engineService = new EngineService(DatabaseType.MySQL, "Server=localhost;Database=perftest;Uid=user;Pwd=pass;");
         
         var complexSQL = @"
             SELECT u.id, u.username, u.email, u.created_at,

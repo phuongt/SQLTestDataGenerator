@@ -4,6 +4,7 @@ using Serilog;
 using System.Data;
 using System.Text.RegularExpressions;
 using Dapper;
+using SqlTestDataGenerator.Core.Abstractions;
 
 namespace SqlTestDataGenerator.Core.Services;
 
@@ -15,13 +16,14 @@ public class CoordinatedDataGenerator
 {
     private readonly ILogger _logger;
     private readonly SqlQueryParserV3 _queryParser;
-    private readonly CommonInsertBuilder _insertBuilder;
+    private CommonInsertBuilder _insertBuilder;
 
     public CoordinatedDataGenerator()
     {
         _logger = Log.ForContext<CoordinatedDataGenerator>();
         _queryParser = new SqlQueryParserV3();
-        _insertBuilder = new CommonInsertBuilder();
+        // Initialize with MySQL handler as default (will be replaced based on database type)
+        _insertBuilder = new CommonInsertBuilder(new MySqlDialectHandler());
     }
 
     /// <summary>
@@ -36,6 +38,13 @@ public class CoordinatedDataGenerator
     {
         _logger.Information("Starting coordinated data generation for {DesiredCount} records", desiredRecordCount);
 
+        // 🔧 CRITICAL FIX: Use appropriate dialect handler based on database type
+        var dialectHandler = CreateDialectHandler(databaseType, databaseInfo.Type);
+        _insertBuilder = new CommonInsertBuilder(dialectHandler);
+        
+        _logger.Information("Using dialect handler: {DialectType} for database type: {DatabaseType}", 
+            dialectHandler.GetType().Name, databaseType);
+
         // Step 1: Analyze query requirements
         var queryAnalysis = AnalyzeQueryRequirements(sqlQuery, databaseInfo);
         _logger.Information("Query analysis: {TableCount} tables, {ConditionCount} WHERE conditions", 
@@ -47,7 +56,7 @@ public class CoordinatedDataGenerator
 
         // Step 3: Convert to INSERT statements
         var insertStatements = ConvertToInsertStatements(coordinatedRecords, databaseInfo);
-        _logger.Information("Created {StatementCount} INSERT statements", insertStatements.Count);
+        _logger.Information("Converted to {StatementCount} INSERT statements", insertStatements.Count);
 
         // Step 4: Validate results with actual query execution (if connection available)
         if (!string.IsNullOrEmpty(connectionString))
@@ -546,9 +555,10 @@ public class CoordinatedDataGenerator
         // Generate appropriate length string based on MaxLength constraint
         var targetLength = Math.Min(10, maxLength); // Reasonable default, respect constraint
         
+        // 🔧 CRITICAL FIX: Never return empty string for Oracle
         if (targetLength <= 0)
         {
-            return string.Empty;
+            return "default"; // Minimum viable string
         }
         
         // Generate generic alphanumeric string with record uniqueness
@@ -557,8 +567,16 @@ public class CoordinatedDataGenerator
         
         var rawValue = baseValue + uniqueSuffix;
         
-        // Apply MaxLength constraint strictly
-        return ApplyMaxLengthConstraint(rawValue, column);
+        // Apply MaxLength constraint strictly - but never return empty
+        var result = ApplyMaxLengthConstraint(rawValue, column);
+        
+        // Final safety check - never return empty string
+        if (string.IsNullOrEmpty(result))
+        {
+            return "def"; // Ultra-minimal fallback
+        }
+        
+        return result;
     }
     
     /// <summary>
@@ -578,10 +596,24 @@ public class CoordinatedDataGenerator
     /// </summary>
     private string ApplyMaxLengthConstraint(string value, ColumnSchema column)
     {
-        if (column.MaxLength.HasValue && value.Length > column.MaxLength.Value)
+        if (string.IsNullOrEmpty(value))
         {
-            return value.Substring(0, column.MaxLength.Value);
+            // 🔧 CRITICAL FIX: Never return empty string, return minimal valid value
+            return "x"; // Single character fallback
         }
+        
+        var maxLength = column.MaxLength;
+        if (maxLength.HasValue && value.Length > maxLength.Value)
+        {
+            // Truncate but ensure at least 1 character
+            var truncated = value.Substring(0, Math.Max(1, maxLength.Value));
+            if (string.IsNullOrEmpty(truncated))
+            {
+                return "x"; // Safety fallback
+            }
+            return truncated;
+        }
+        
         return value;
     }
     
@@ -804,6 +836,33 @@ public class CoordinatedDataGenerator
             _logger.Warning(ex, "Validation failed, assuming data is sufficient");
             return new ValidationResult { IsValid = true, ActualCount = expectedCount, ExpectedCount = expectedCount };
         }
+    }
+
+    /// <summary>
+    /// Create appropriate dialect handler based on database type
+    /// </summary>
+    private ISqlDialectHandler CreateDialectHandler(string databaseType, DatabaseType dbType)
+    {
+        // Try to parse from string first
+        if (!string.IsNullOrEmpty(databaseType))
+        {
+            if (databaseType.Equals("Oracle", StringComparison.OrdinalIgnoreCase))
+            {
+                return new OracleDialectHandler();
+            }
+            if (databaseType.Equals("MySQL", StringComparison.OrdinalIgnoreCase))
+            {
+                return new MySqlDialectHandler();
+            }
+        }
+        
+        // Fall back to DatabaseType enum
+        return dbType switch
+        {
+            DatabaseType.Oracle => new OracleDialectHandler(),
+            DatabaseType.MySQL => new MySqlDialectHandler(),
+            _ => new MySqlDialectHandler() // Default fallback
+        };
     }
 
     #region Helper Classes

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Globalization;
 using SqlTestDataGenerator.Core.Models;
 using Serilog;
 
@@ -71,12 +72,25 @@ public class ConstraintValidator
         WhereCondition condition,
         string tableName)
     {
-        if (!record.ContainsKey(condition.ColumnName))
+        // Fix case sensitivity issue for Oracle - check both exact match and case-insensitive match
+        string actualColumnKey = null;
+        if (record.ContainsKey(condition.ColumnName))
+        {
+            actualColumnKey = condition.ColumnName;
+        }
+        else
+        {
+            // Try case-insensitive match (Oracle returns UPPERCASE column names)
+            actualColumnKey = record.Keys.FirstOrDefault(k => 
+                k.Equals(condition.ColumnName, StringComparison.OrdinalIgnoreCase));
+        }
+        
+        if (actualColumnKey == null)
         {
             return null; // Column not generated, skip validation
         }
 
-        var actualValue = record[condition.ColumnName]?.ToString() ?? "";
+        var actualValue = record[actualColumnKey]?.ToString() ?? "";
         var isValid = false;
 
         switch (condition.Operator.ToUpper())
@@ -142,7 +156,19 @@ public class ConstraintValidator
     {
         var violations = new List<ConstraintViolation>();
 
-        if (!record.ContainsKey(column.ColumnName))
+        // Fix case sensitivity for Oracle columns
+        string actualColumnKey = null;
+        if (record.ContainsKey(column.ColumnName))
+        {
+            actualColumnKey = column.ColumnName;
+        }
+        else
+        {
+            actualColumnKey = record.Keys.FirstOrDefault(k => 
+                k.Equals(column.ColumnName, StringComparison.OrdinalIgnoreCase));
+        }
+        
+        if (actualColumnKey == null)
         {
             if (!column.IsNullable)
             {
@@ -157,7 +183,7 @@ public class ConstraintValidator
             return violations;
         }
 
-        var value = record[column.ColumnName];
+        var value = record[actualColumnKey];
 
         // NOT NULL constraint
         if (value == null && !column.IsNullable)
@@ -737,9 +763,13 @@ public class ConstraintValidator
         {
             result.TotalChecks++;
             
-            if (record.ContainsKey(constraint.ColumnName))
+            // Fix case sensitivity for Oracle columns
+            string actualColumnKey = record.Keys.FirstOrDefault(k => 
+                k.Equals(constraint.ColumnName, StringComparison.OrdinalIgnoreCase));
+                
+            if (actualColumnKey != null)
             {
-                var value = record[constraint.ColumnName]?.ToString() ?? "";
+                var value = record[actualColumnKey]?.ToString() ?? "";
                 var pattern = constraint.Pattern.Replace("%", ".*").Replace("_", ".");
                 
                 if (Regex.IsMatch(value, pattern, RegexOptions.IgnoreCase))
@@ -765,9 +795,13 @@ public class ConstraintValidator
         {
             result.TotalChecks++;
             
-            if (record.ContainsKey(constraint.ColumnName))
+            // Fix case sensitivity for Oracle columns
+            string actualColumnKey = record.Keys.FirstOrDefault(k => 
+                k.Equals(constraint.ColumnName, StringComparison.OrdinalIgnoreCase));
+                
+            if (actualColumnKey != null)
             {
-                var value = record[constraint.ColumnName]?.ToString() ?? "";
+                var value = record[actualColumnKey]?.ToString() ?? "";
                 
                 if (value.Equals(constraint.Value, StringComparison.OrdinalIgnoreCase))
                 {
@@ -792,9 +826,13 @@ public class ConstraintValidator
         {
             result.TotalChecks++;
             
-            if (record.ContainsKey(constraint.ColumnName))
+            // Fix case sensitivity for Oracle columns
+            string actualColumnKey = record.Keys.FirstOrDefault(k => 
+                k.Equals(constraint.ColumnName, StringComparison.OrdinalIgnoreCase));
+                
+            if (actualColumnKey != null)
             {
-                var value = ConvertToBoolean(record[constraint.ColumnName]);
+                var value = ConvertToBoolean(record[actualColumnKey]);
                 
                 if (value == constraint.BooleanValue)
                 {
@@ -819,17 +857,21 @@ public class ConstraintValidator
         {
             result.TotalChecks++;
             
-            if (record.ContainsKey(constraint.ColumnName))
+            // Fix case sensitivity for Oracle columns
+            string actualColumnKey = record.Keys.FirstOrDefault(k => 
+                k.Equals(constraint.ColumnName, StringComparison.OrdinalIgnoreCase));
+                
+            if (actualColumnKey != null)
             {
                 // CRITICAL FIX: Add calendar date validation first
-                var stringValue = record[constraint.ColumnName]?.ToString() ?? "";
+                var stringValue = record[actualColumnKey]?.ToString() ?? "";
                 if (!IsValidCalendarDate(stringValue))
                 {
                     result.Violations.Add($"DATE constraint failed: {tableName}.{constraint.ColumnName} = {stringValue} is not a valid calendar date (e.g., February 30th doesn't exist)");
                     continue; // Skip further validation for invalid dates
                 }
                 
-                var value = ConvertToDateTime(record[constraint.ColumnName]);
+                var value = ConvertToDateTime(record[actualColumnKey]);
                 bool isValid = false;
                 
                 if (value.HasValue && constraint.ConstraintType == "YEAR_EQUALS")
@@ -863,9 +905,13 @@ public class ConstraintValidator
         {
             result.TotalChecks++;
             
-            if (record.ContainsKey(constraint.ColumnName))
+            // Fix case sensitivity for Oracle columns
+            string actualColumnKey = record.Keys.FirstOrDefault(k => 
+                k.Equals(constraint.ColumnName, StringComparison.OrdinalIgnoreCase));
+                
+            if (actualColumnKey != null)
             {
-                var value = record[constraint.ColumnName]?.ToString() ?? "";
+                var value = record[actualColumnKey]?.ToString() ?? "";
                 bool isValid = false;
                 
                 switch (constraint.Operator)
@@ -1137,4 +1183,684 @@ public class ValidationResult
     public int TotalChecks { get; set; }
     public int PassedChecks { get; set; }
     public List<string> Violations { get; set; } = new();
+} 
+
+/// <summary>
+/// DEEP CONSTRAINT VALIDATION SYSTEM - Advanced validator with proper Oracle column resolution
+/// </summary>
+public class AdvancedConstraintValidator
+{
+    private readonly ILogger _logger;
+    private readonly DynamicAliasResolver _aliasResolver;
+    
+    public AdvancedConstraintValidator()
+    {
+        _logger = Log.Logger.ForContext<AdvancedConstraintValidator>();
+        _aliasResolver = new DynamicAliasResolver();
+    }
+    
+    /// <summary>
+    /// Validate generated data with deep constraint analysis and proper Oracle handling
+    /// </summary>
+    public DeepValidationResult ValidateWithDeepAnalysis(
+        List<InsertStatement> insertStatements, 
+        ComprehensiveConstraints constraints,
+        string originalSqlQuery,
+        DatabaseInfo databaseInfo)
+    {
+        _logger.Information("Starting deep constraint validation with {StatementCount} INSERT statements", insertStatements.Count);
+        
+        var result = new DeepValidationResult
+        {
+            IsValid = true,
+            TotalConstraints = 0,
+            PassedConstraints = 0,
+            DetailedViolations = new List<DetailedViolation>(),
+            ValidationSummary = new Dictionary<string, int>()
+        };
+        
+        try
+        {
+            // Step 1: Build proper alias mapping from original SQL
+            var aliasMapping = _aliasResolver.ExtractAliasMapping(originalSqlQuery, databaseInfo);
+            _logger.Information("Extracted {AliasCount} alias mappings from SQL", aliasMapping.Count);
+            
+            // Step 2: Validate each table's data
+            foreach (var statement in insertStatements)
+            {
+                var tableData = ExtractDataFromInsertStatement(statement.SqlStatement);
+                if (tableData == null) continue;
+                
+                var tableName = tableData.Value.TableName;
+                var record = tableData.Value.ColumnValues;
+                
+                _logger.Information("Deep validating table {TableName} with {ColumnCount} columns", tableName, record.Count);
+                
+                // Validate LIKE constraints with proper alias resolution
+                ValidateDeepLikeConstraints(record, tableName, constraints.LikePatterns, aliasMapping, result);
+                
+                // Validate JOIN constraints with FK awareness
+                ValidateDeepJoinConstraints(record, tableName, constraints.JoinConstraints, aliasMapping, databaseInfo, result);
+                
+                // Validate Boolean constraints with Oracle NUMBER(1) handling
+                ValidateDeepBooleanConstraints(record, tableName, constraints.BooleanConstraints, aliasMapping, result);
+                
+                // Validate Date constraints with Oracle calendar validation
+                ValidateDeepDateConstraints(record, tableName, constraints.DateConstraints, aliasMapping, result);
+                
+                // Validate WHERE constraints with case sensitivity handling
+                ValidateDeepWhereConstraints(record, tableName, constraints.WhereConstraints, aliasMapping, result);
+            }
+            
+            // Step 3: Calculate final validation score
+            result.IsValid = result.PassedConstraints == result.TotalConstraints || 
+                           (result.TotalConstraints > 0 && (result.PassedConstraints * 100.0 / result.TotalConstraints) >= 75.0);
+            
+            _logger.Information("Deep validation completed: {Passed}/{Total} constraints passed ({Percentage:F1}%), Valid: {IsValid}", 
+                result.PassedConstraints, result.TotalConstraints, 
+                result.TotalConstraints > 0 ? (result.PassedConstraints * 100.0 / result.TotalConstraints) : 100.0,
+                result.IsValid);
+                
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error during deep constraint validation");
+            result.IsValid = false;
+            result.DetailedViolations.Add(new DetailedViolation
+            {
+                ViolationType = "VALIDATION_ERROR",
+                Description = $"Deep validation error: {ex.Message}",
+                Severity = ViolationSeverity.Critical
+            });
+            return result;
+        }
+    }
+    
+    private void ValidateDeepLikeConstraints(
+        Dictionary<string, object> record, 
+        string tableName, 
+        List<LikePatternInfo> likeConstraints, 
+        Dictionary<string, string> aliasMapping,
+        DeepValidationResult result)
+    {
+        foreach (var constraint in likeConstraints)
+        {
+            result.TotalConstraints++;
+            
+            // Resolve table alias to actual table name
+            var constraintTableName = _aliasResolver.ResolveTableName(constraint.TableAlias, aliasMapping);
+            
+            if (!_aliasResolver.MatchesTable(constraint.TableAlias, tableName, aliasMapping))
+            {
+                continue; // This constraint doesn't apply to current table
+            }
+            
+            // Find column with case-insensitive matching (Oracle compatibility)
+            string actualColumnKey = FindColumnKey(record, constraint.ColumnName);
+            
+            if (actualColumnKey != null)
+            {
+                var value = record[actualColumnKey]?.ToString() ?? "";
+                
+                // Enhanced LIKE pattern matching
+                if (value.Contains(constraint.RequiredValue, StringComparison.OrdinalIgnoreCase))
+                {
+                    result.PassedConstraints++;
+                    _logger.Debug("✅ LIKE constraint passed: {Table}.{Column} contains '{Required}'", 
+                        tableName, constraint.ColumnName, constraint.RequiredValue);
+                }
+                else
+                {
+                    result.DetailedViolations.Add(new DetailedViolation
+                    {
+                        ViolationType = "LIKE_PATTERN",
+                        TableName = tableName,
+                        ColumnName = constraint.ColumnName,
+                        ExpectedValue = constraint.RequiredValue,
+                        ActualValue = value,
+                        Description = $"Column {tableName}.{constraint.ColumnName} value '{value}' does not contain required pattern '{constraint.RequiredValue}'",
+                        Severity = ViolationSeverity.Critical
+                    });
+                    _logger.Warning("❌ LIKE constraint failed: {Table}.{Column} = '{Value}' but should contain '{Required}'", 
+                        tableName, constraint.ColumnName, value, constraint.RequiredValue);
+                }
+            }
+            else
+            {
+                result.DetailedViolations.Add(new DetailedViolation
+                {
+                    ViolationType = "MISSING_COLUMN",
+                    TableName = tableName,
+                    ColumnName = constraint.ColumnName,
+                    Description = $"Missing column {tableName}.{constraint.ColumnName} for LIKE constraint",
+                    Severity = ViolationSeverity.Major
+                });
+                _logger.Warning("❌ LIKE constraint failed: Missing column {Table}.{Column}", tableName, constraint.ColumnName);
+            }
+        }
+    }
+    
+    private void ValidateDeepJoinConstraints(
+        Dictionary<string, object> record, 
+        string tableName, 
+        List<JoinConstraintInfo> joinConstraints, 
+        Dictionary<string, string> aliasMapping,
+        DatabaseInfo databaseInfo,
+        DeepValidationResult result)
+    {
+        foreach (var constraint in joinConstraints)
+        {
+            result.TotalConstraints++;
+            
+            if (!_aliasResolver.MatchesTable(constraint.TableAlias, tableName, aliasMapping))
+            {
+                continue; // This constraint doesn't apply to current table
+            }
+            
+            // Enhanced FK constraint validation
+            string actualColumnKey = FindColumnKey(record, constraint.ColumnName);
+            
+            if (actualColumnKey != null)
+            {
+                var value = record[actualColumnKey]?.ToString() ?? "";
+                
+                // For JOIN constraints, validate that the value exists or is reasonable
+                if (ValidateJoinConstraintValue(value, constraint, tableName, databaseInfo))
+                {
+                    result.PassedConstraints++;
+                    _logger.Debug("✅ JOIN constraint passed: {Table}.{Column} = '{Value}'", 
+                        tableName, constraint.ColumnName, value);
+                }
+                else
+                {
+                    result.DetailedViolations.Add(new DetailedViolation
+                    {
+                        ViolationType = "JOIN_CONSTRAINT",
+                        TableName = tableName,
+                        ColumnName = constraint.ColumnName,
+                        ExpectedValue = constraint.Value,
+                        ActualValue = value,
+                        Description = $"JOIN constraint failed: {tableName}.{constraint.ColumnName} = '{value}' but expected valid FK reference",
+                        Severity = ViolationSeverity.Major
+                    });
+                    _logger.Warning("❌ JOIN constraint failed: {Table}.{Column} = '{Value}' (invalid FK reference)", 
+                        tableName, constraint.ColumnName, value);
+                }
+            }
+            else
+            {
+                result.DetailedViolations.Add(new DetailedViolation
+                {
+                    ViolationType = "MISSING_JOIN_COLUMN",
+                    TableName = tableName,
+                    ColumnName = constraint.ColumnName,
+                    Description = $"Missing column {tableName}.{constraint.ColumnName} for JOIN constraint",
+                    Severity = ViolationSeverity.Critical
+                });
+                _logger.Warning("❌ JOIN constraint failed: Missing column {Table}.{Column}", tableName, constraint.ColumnName);
+            }
+        }
+    }
+    
+    private void ValidateDeepBooleanConstraints(
+        Dictionary<string, object> record, 
+        string tableName, 
+        List<BooleanConstraintInfo> booleanConstraints, 
+        Dictionary<string, string> aliasMapping,
+        DeepValidationResult result)
+    {
+        foreach (var constraint in booleanConstraints)
+        {
+            result.TotalConstraints++;
+            
+            if (!_aliasResolver.MatchesTable(constraint.TableAlias, tableName, aliasMapping))
+            {
+                continue; // This constraint doesn't apply to current table
+            }
+            
+            string actualColumnKey = FindColumnKey(record, constraint.ColumnName);
+            
+            if (actualColumnKey != null)
+            {
+                var value = record[actualColumnKey];
+                
+                // Enhanced Oracle boolean validation (NUMBER(1) support)
+                var actualBoolean = ConvertToOracleBoolean(value);
+                
+                if (actualBoolean == constraint.BooleanValue)
+                {
+                    result.PassedConstraints++;
+                    _logger.Debug("✅ BOOLEAN constraint passed: {Table}.{Column} = {Value} (Oracle compatible)", 
+                        tableName, constraint.ColumnName, actualBoolean);
+                }
+                else
+                {
+                    result.DetailedViolations.Add(new DetailedViolation
+                    {
+                        ViolationType = "BOOLEAN_CONSTRAINT",
+                        TableName = tableName,
+                        ColumnName = constraint.ColumnName,
+                        ExpectedValue = constraint.BooleanValue.ToString(),
+                        ActualValue = actualBoolean.ToString(),
+                        Description = $"Boolean constraint failed: {tableName}.{constraint.ColumnName} = {actualBoolean} but expected {constraint.BooleanValue}",
+                        Severity = ViolationSeverity.Critical
+                    });
+                    _logger.Warning("❌ BOOLEAN constraint failed: {Table}.{Column} = {Actual} but expected {Expected}", 
+                        tableName, constraint.ColumnName, actualBoolean, constraint.BooleanValue);
+                }
+            }
+            else
+            {
+                result.DetailedViolations.Add(new DetailedViolation
+                {
+                    ViolationType = "MISSING_BOOLEAN_COLUMN",
+                    TableName = tableName,
+                    ColumnName = constraint.ColumnName,
+                    Description = $"Missing column {tableName}.{constraint.ColumnName} for Boolean constraint",
+                    Severity = ViolationSeverity.Major
+                });
+                _logger.Warning("❌ BOOLEAN constraint failed: Missing column {Table}.{Column}", tableName, constraint.ColumnName);
+            }
+        }
+    }
+    
+    private void ValidateDeepDateConstraints(
+        Dictionary<string, object> record, 
+        string tableName, 
+        List<DateConstraintInfo> dateConstraints, 
+        Dictionary<string, string> aliasMapping,
+        DeepValidationResult result)
+    {
+        foreach (var constraint in dateConstraints)
+        {
+            result.TotalConstraints++;
+            
+            if (!_aliasResolver.MatchesTable(constraint.TableAlias, tableName, aliasMapping))
+            {
+                continue; // This constraint doesn't apply to current table
+            }
+            
+            string actualColumnKey = FindColumnKey(record, constraint.ColumnName);
+            
+            if (actualColumnKey != null)
+            {
+                var value = record[actualColumnKey];
+                
+                // Enhanced Oracle date validation with calendar checking
+                if (ValidateOracleDateConstraint(value, constraint))
+                {
+                    result.PassedConstraints++;
+                    _logger.Debug("✅ DATE constraint passed: {Table}.{Column} satisfies {Type} = {Value}", 
+                        tableName, constraint.ColumnName, constraint.ConstraintType, constraint.Value);
+                }
+                else
+                {
+                    result.DetailedViolations.Add(new DetailedViolation
+                    {
+                        ViolationType = "DATE_CONSTRAINT",
+                        TableName = tableName,
+                        ColumnName = constraint.ColumnName,
+                        ExpectedValue = $"{constraint.ConstraintType}={constraint.Value}",
+                        ActualValue = value?.ToString() ?? "NULL",
+                        Description = $"Date constraint failed: {tableName}.{constraint.ColumnName} does not satisfy {constraint.ConstraintType} = {constraint.Value}",
+                        Severity = ViolationSeverity.Critical
+                    });
+                    _logger.Warning("❌ DATE constraint failed: {Table}.{Column} = {Value} does not satisfy {Type} = {Expected}", 
+                        tableName, constraint.ColumnName, value, constraint.ConstraintType, constraint.Value);
+                }
+            }
+            else
+            {
+                result.DetailedViolations.Add(new DetailedViolation
+                {
+                    ViolationType = "MISSING_DATE_COLUMN",
+                    TableName = tableName,
+                    ColumnName = constraint.ColumnName,
+                    Description = $"Missing column {tableName}.{constraint.ColumnName} for Date constraint",
+                    Severity = ViolationSeverity.Major
+                });
+                _logger.Warning("❌ DATE constraint failed: Missing column {Table}.{Column}", tableName, constraint.ColumnName);
+            }
+        }
+    }
+    
+    private void ValidateDeepWhereConstraints(
+        Dictionary<string, object> record, 
+        string tableName, 
+        List<GeneralConstraintInfo> whereConstraints, 
+        Dictionary<string, string> aliasMapping,
+        DeepValidationResult result)
+    {
+        foreach (var constraint in whereConstraints)
+        {
+            result.TotalConstraints++;
+            
+            if (!_aliasResolver.MatchesTable(constraint.TableAlias, tableName, aliasMapping))
+            {
+                continue; // This constraint doesn't apply to current table
+            }
+            
+            string actualColumnKey = FindColumnKey(record, constraint.ColumnName);
+            
+            if (actualColumnKey != null)
+            {
+                var value = record[actualColumnKey]?.ToString() ?? "";
+                
+                // Enhanced WHERE constraint validation
+                if (ValidateWhereConstraintValue(value, constraint))
+                {
+                    result.PassedConstraints++;
+                    _logger.Debug("✅ WHERE constraint passed: {Table}.{Column} {Op} '{Value}'", 
+                        tableName, constraint.ColumnName, constraint.Operator, constraint.Value);
+                }
+                else
+                {
+                    result.DetailedViolations.Add(new DetailedViolation
+                    {
+                        ViolationType = "WHERE_CONSTRAINT",
+                        TableName = tableName,
+                        ColumnName = constraint.ColumnName,
+                        ExpectedValue = $"{constraint.Operator} {constraint.Value}",
+                        ActualValue = value,
+                        Description = $"WHERE constraint failed: {tableName}.{constraint.ColumnName} {constraint.Operator} '{constraint.Value}' but got '{value}'",
+                        Severity = ViolationSeverity.Major
+                    });
+                    _logger.Warning("❌ WHERE constraint failed: {Table}.{Column} = '{Actual}' does not satisfy {Op} '{Expected}'", 
+                        tableName, constraint.ColumnName, value, constraint.Operator, constraint.Value);
+                }
+            }
+            else
+            {
+                result.DetailedViolations.Add(new DetailedViolation
+                {
+                    ViolationType = "MISSING_WHERE_COLUMN",
+                    TableName = tableName,
+                    ColumnName = constraint.ColumnName,
+                    Description = $"Missing column {tableName}.{constraint.ColumnName} for WHERE constraint",
+                    Severity = ViolationSeverity.Major
+                });
+                _logger.Warning("❌ WHERE constraint failed: Missing column {Table}.{Column}", tableName, constraint.ColumnName);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Find column key with case-insensitive matching (Oracle compatibility)
+    /// </summary>
+    private string FindColumnKey(Dictionary<string, object> record, string columnName)
+    {
+        return record.Keys.FirstOrDefault(k => k.Equals(columnName, StringComparison.OrdinalIgnoreCase));
+    }
+    
+    /// <summary>
+    /// Convert value to Oracle-compatible boolean (NUMBER(1))
+    /// </summary>
+    private bool ConvertToOracleBoolean(object value)
+    {
+        if (value == null) return false;
+        
+        var stringValue = value.ToString();
+        
+        // Oracle NUMBER(1) boolean values
+        if (stringValue == "1") return true;
+        if (stringValue == "0") return false;
+        
+        // Standard boolean parsing
+        if (bool.TryParse(stringValue, out var boolResult))
+            return boolResult;
+            
+        // Numeric parsing
+        if (int.TryParse(stringValue, out var intResult))
+            return intResult != 0;
+            
+        return false;
+    }
+    
+    /// <summary>
+    /// Validate JOIN constraint value with FK awareness
+    /// </summary>
+    private bool ValidateJoinConstraintValue(string value, JoinConstraintInfo constraint, string tableName, DatabaseInfo databaseInfo)
+    {
+        // Basic validation: non-empty value for FK columns
+        if (string.IsNullOrEmpty(value) || value == "NULL")
+            return false;
+            
+        // Enhanced: Check if value is numeric for ID columns
+        if (constraint.ColumnName.ToLower().Contains("id"))
+        {
+            return int.TryParse(value, out var id) && id > 0;
+        }
+        
+        return true; // Default to valid for other cases
+    }
+    
+    /// <summary>
+    /// Validate Oracle date constraint with calendar validation
+    /// </summary>
+    private bool ValidateOracleDateConstraint(object value, DateConstraintInfo constraint)
+    {
+        if (value == null) return false;
+        
+        var stringValue = value.ToString() ?? "";
+        
+        // First validate calendar date
+        if (!IsValidCalendarDate(stringValue))
+            return false;
+            
+        if (constraint.ConstraintType == "YEAR_EQUALS")
+        {
+            if (DateTime.TryParse(stringValue, out var dateValue) && 
+                int.TryParse(constraint.Value, out var expectedYear))
+            {
+                return dateValue.Year == expectedYear;
+            }
+        }
+        
+        return false;
+    }
+    
+    /// <summary>
+    /// Validate WHERE constraint value
+    /// </summary>
+    private bool ValidateWhereConstraintValue(string value, GeneralConstraintInfo constraint)
+    {
+        switch (constraint.Operator.ToUpper())
+        {
+            case "=":
+                return value.Equals(constraint.Value, StringComparison.OrdinalIgnoreCase);
+                
+            case "LIKE":
+                var pattern = constraint.Value.Replace("%", ".*").Replace("_", ".");
+                return Regex.IsMatch(value, pattern, RegexOptions.IgnoreCase);
+                
+            case "!=":
+            case "<>":
+                return !value.Equals(constraint.Value, StringComparison.OrdinalIgnoreCase);
+                
+            default:
+                return true; // Default to valid for unknown operators
+        }
+    }
+    
+    /// <summary>
+    /// Validate calendar date (e.g., no February 30th)
+    /// </summary>
+    private bool IsValidCalendarDate(string dateString)
+    {
+        if (string.IsNullOrEmpty(dateString)) return false;
+        
+        // Try various Oracle date formats
+        var formats = new[]
+        {
+            "yyyy-MM-dd",
+            "yyyy-MM-dd HH:mm:ss",
+            "dd-MM-yyyy",
+            "MM/dd/yyyy",
+            "yyyy/MM/dd"
+        };
+        
+        foreach (var format in formats)
+        {
+            if (DateTime.TryParseExact(dateString, format, null, DateTimeStyles.None, out var parsedDate))
+            {
+                // Additional validation: ensure date is reasonable
+                return parsedDate.Year >= 1900 && parsedDate.Year <= DateTime.Now.Year + 10;
+            }
+        }
+        
+        // Fallback: standard parsing
+        if (DateTime.TryParse(dateString, out var date))
+        {
+            return date.Year >= 1900 && date.Year <= DateTime.Now.Year + 10;
+        }
+        
+        return false;
+    }
+    
+    private (string TableName, Dictionary<string, object> ColumnValues)? ExtractDataFromInsertStatement(string insertSql)
+    {
+        try
+        {
+            // Parse INSERT INTO `tableName` (`col1`, `col2`) VALUES (val1, val2)
+            var tableMatch = Regex.Match(insertSql, @"INSERT\s+INTO\s+`?(\w+)`?\s*\(", RegexOptions.IgnoreCase);
+            if (!tableMatch.Success) return null;
+            
+            var tableName = tableMatch.Groups[1].Value;
+            
+            // Extract columns
+            var columnsMatch = Regex.Match(insertSql, @"\(([^)]+)\)\s+VALUES", RegexOptions.IgnoreCase);
+            if (!columnsMatch.Success) return null;
+            
+            var columnPart = columnsMatch.Groups[1].Value;
+            var columns = columnPart.Split(',')
+                .Select(c => c.Trim().Trim('`', '\'', '"'))
+                .ToList();
+            
+            // Extract values
+            var valuesMatch = Regex.Match(insertSql, @"VALUES\s*\(([^)]+)\)", RegexOptions.IgnoreCase);
+            if (!valuesMatch.Success) return null;
+            
+            var valuesPart = valuesMatch.Groups[1].Value;
+            var values = ParseValues(valuesPart);
+            
+            if (columns.Count != values.Count) return null;
+            
+            var columnValues = new Dictionary<string, object>();
+            for (int i = 0; i < columns.Count; i++)
+            {
+                columnValues[columns[i]] = values[i];
+            }
+            
+            return (tableName, columnValues);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to extract data from INSERT statement: {SQL}", insertSql);
+            return null;
+        }
+    }
+    
+    private List<object> ParseValues(string valuesPart)
+    {
+        var values = new List<object>();
+        var current = "";
+        var inQuotes = false;
+        var quoteChar = '\0';
+        
+        for (int i = 0; i < valuesPart.Length; i++)
+        {
+            var ch = valuesPart[i];
+            
+            if (!inQuotes && (ch == '\'' || ch == '"'))
+            {
+                inQuotes = true;
+                quoteChar = ch;
+            }
+            else if (inQuotes && ch == quoteChar)
+            {
+                inQuotes = false;
+                quoteChar = '\0';
+            }
+            else if (!inQuotes && ch == ',')
+            {
+                values.Add(ParseValue(current.Trim()));
+                current = "";
+                continue;
+            }
+            
+            current += ch;
+        }
+        
+        if (!string.IsNullOrEmpty(current))
+        {
+            values.Add(ParseValue(current.Trim()));
+        }
+        
+        return values;
+    }
+    
+    private object ParseValue(string value)
+    {
+        if (value.Equals("NULL", StringComparison.OrdinalIgnoreCase))
+            return null!;
+        
+        if (value.StartsWith("'") && value.EndsWith("'"))
+            return value.Substring(1, value.Length - 2);
+        
+        if (value.StartsWith("\"") && value.EndsWith("\""))
+            return value.Substring(1, value.Length - 2);
+        
+        if (int.TryParse(value, out int intVal))
+            return intVal;
+        
+        if (double.TryParse(value, out double doubleVal))
+            return doubleVal;
+        
+        if (bool.TryParse(value, out bool boolVal))
+            return boolVal;
+        
+        if (DateTime.TryParse(value, out DateTime dateVal))
+            return dateVal;
+        
+        return value;
+    }
+}
+
+/// <summary>
+/// Deep validation result with detailed violation tracking
+/// </summary>
+public class DeepValidationResult
+{
+    public bool IsValid { get; set; }
+    public int TotalConstraints { get; set; }
+    public int PassedConstraints { get; set; }
+    public List<DetailedViolation> DetailedViolations { get; set; } = new();
+    public Dictionary<string, int> ValidationSummary { get; set; } = new();
+    
+    public double PassRate => TotalConstraints > 0 ? (PassedConstraints * 100.0 / TotalConstraints) : 100.0;
+}
+
+/// <summary>
+/// Detailed violation information for deep analysis
+/// </summary>
+public class DetailedViolation
+{
+    public string ViolationType { get; set; } = "";
+    public string TableName { get; set; } = "";
+    public string ColumnName { get; set; } = "";
+    public string? ExpectedValue { get; set; }
+    public string? ActualValue { get; set; }
+    public string Description { get; set; } = "";
+    public ViolationSeverity Severity { get; set; } = ViolationSeverity.Major;
+}
+
+/// <summary>
+/// Violation severity levels for deep validation
+/// </summary>
+public enum ViolationSeverity
+{
+    Minor,   // Non-critical issues
+    Major,   // Important but not blocking
+    Critical // Must be fixed
 } 

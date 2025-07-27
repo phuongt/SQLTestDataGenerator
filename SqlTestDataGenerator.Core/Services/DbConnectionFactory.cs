@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using MySqlConnector;
 using Npgsql;
 using SqlTestDataGenerator.Core.Models;
+using Oracle.ManagedDataAccess.Client;
 
 namespace SqlTestDataGenerator.Core.Services;
 
@@ -18,6 +19,7 @@ public static class DbConnectionFactory
             "sql server" => new SqlConnection(connectionString),
             "mysql" => new MySqlConnection(connectionString),
             "postgresql" => new NpgsqlConnection(connectionString),
+            "oracle" => new OracleConnection(connectionString),
             _ => throw new NotSupportedException($"Database type '{databaseType}' is not supported.")
         };
     }
@@ -126,6 +128,21 @@ public static class DbConnectionFactory
                     connectionString += ";Command Timeout=300";
                 }
                 break;
+                
+            case "oracle":
+                if (!connectionString.Contains("Connection Timeout"))
+                {
+                    connectionString += ";Connection Timeout=120";
+                }
+                if (!connectionString.Contains("Connection Lifetime"))
+                {
+                    connectionString += ";Connection Lifetime=300";
+                }
+                if (!connectionString.Contains("Pooling"))
+                {
+                    connectionString += ";Pooling=true";
+                }
+                break;
         }
         
         return connectionString;
@@ -138,6 +155,7 @@ public static class DbConnectionFactory
             "sql server" => DatabaseType.SqlServer,
             "mysql" => DatabaseType.MySQL,
             "postgresql" => DatabaseType.PostgreSQL,
+            "oracle" => DatabaseType.Oracle,
             _ => throw new NotSupportedException($"Database type '{databaseType}' is not supported.")
         };
     }
@@ -212,6 +230,31 @@ public static class DbConnectionFactory
                 WHERE c.table_name = '{tableName}'
                 ORDER BY c.ordinal_position",
 
+            DatabaseType.Oracle => $@"
+                SELECT 
+                    c.column_name,
+                    c.data_type,
+                    c.nullable,
+                    c.char_length as character_maximum_length,
+                    c.data_precision as numeric_precision,
+                    c.data_scale as numeric_scale,
+                    'NULL' as column_default,
+                    CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END as is_primary_key,
+                    CASE 
+                        WHEN c.identity_column = 'YES' THEN 1 
+                        ELSE 0 
+                    END as is_identity
+                FROM user_tab_columns c
+                LEFT JOIN (
+                    SELECT cc.column_name
+                    FROM user_constraints uc
+                    JOIN user_cons_columns cc ON uc.constraint_name = cc.constraint_name
+                    WHERE uc.constraint_type = 'P' 
+                        AND uc.table_name = UPPER('{tableName}')
+                ) pk ON UPPER(c.column_name) = UPPER(pk.column_name)
+                WHERE UPPER(c.table_name) = UPPER('{tableName}')
+                ORDER BY c.column_id",
+
             _ => throw new NotSupportedException($"Database type '{dbType}' is not supported.")
         };
     }
@@ -262,6 +305,22 @@ public static class DbConnectionFactory
                     ON ccu.constraint_name = tc.constraint_name
                 WHERE tc.constraint_type = 'FOREIGN KEY' 
                     AND tc.table_name = '{tableName}'",
+
+            DatabaseType.Oracle => $@"
+                SELECT 
+                    uc.constraint_name,
+                    ucc.column_name,
+                    r_uc.table_name as referenced_table,
+                    r_ucc.column_name as referenced_column,
+                    USER as referenced_schema
+                FROM user_constraints uc
+                JOIN user_cons_columns ucc ON uc.constraint_name = ucc.constraint_name
+                JOIN user_constraints r_uc ON uc.r_constraint_name = r_uc.constraint_name
+                JOIN user_cons_columns r_ucc ON r_uc.constraint_name = r_ucc.constraint_name 
+                    AND ucc.position = r_ucc.position
+                WHERE uc.constraint_type = 'R' 
+                    AND UPPER(uc.table_name) = UPPER('{tableName}')
+                ORDER BY ucc.position",
 
             _ => throw new NotSupportedException($"Database type '{dbType}' is not supported.")
         };

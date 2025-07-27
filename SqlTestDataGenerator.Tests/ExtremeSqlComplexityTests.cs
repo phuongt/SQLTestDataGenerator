@@ -22,7 +22,7 @@ public class ExtremeSqlComplexityTests
     public void Setup()
     {
         Console.WriteLine("=== EXTREME SQL COMPLEXITY TEST SETUP ===");
-        _engineService = new EngineService("AIzaSyCsOzujfOGEBwBvbCdPsKw8Cf16bb0iTJM");
+        _engineService = new EngineService(Core.Models.DatabaseType.MySQL, _connectionString, "AIzaSyCsOzujfOGEBwBvbCdPsKw8Cf16bb0iTJM");
         
         // Ensure export directory exists
         var exportDir = "sql-exports";

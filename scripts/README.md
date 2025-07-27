@@ -1,256 +1,180 @@
-# 📜 Scripts Documentation
+# Scripts Directory
 
-Scripts folder chứa các PowerShell scripts để build, run và test SqlTestDataGenerator project.
+This directory contains PowerShell scripts for automating various tasks in the SqlTestDataGenerator project.
 
-## 📋 Available Scripts
+## 🎯 Main Scripts (Essential Operations)
 
-### 1. 🏗️ build-and-run-ui.ps1
-**Purpose**: Build và run SqlTestDataGenerator.UI Windows Forms application
+### 1. **final-test.ps1** - Comprehensive Testing Suite
+**Purpose:** Run complete complex test cases for both MySQL and Oracle databases
 
-**Usage**:
+**Usage:**
 ```powershell
-# Basic run (Debug mode)
-.\scripts\build-and-run-ui.ps1
+# Run all tests (MySQL + Oracle + Cross-database)
+.\final-test.ps1
 
-# Clean build
-.\scripts\build-and-run-ui.ps1 -Clean
+# Run only MySQL tests
+.\final-test.ps1 -DatabaseType MySQL
 
-# Release build
-.\scripts\build-and-run-ui.ps1 -Release
+# Run only Oracle tests  
+.\final-test.ps1 -DatabaseType Oracle
 
-# Clean Release build
-.\scripts\build-and-run-ui.ps1 -Clean -Release
+# Run with verbose output and generate detailed report
+.\final-test.ps1 -Verbose -GenerateReport
 ```
 
-**Features**:
-- ✅ Automatic .NET SDK detection
-- ✅ Project file validation
-- ✅ Clean build option
-- ✅ Debug/Release configuration
-- ✅ Colored output with status indicators
-- ✅ Error handling with detailed messages
+**Features:**
+- ✅ MySQL complex SQL generation tests
+- ✅ Oracle complex query tests (including Phuong1989 test case)
+- ✅ Cross-database integration tests
+- ✅ AI integration tests
+- ✅ Automatic report generation
+- ✅ Comprehensive logging with timestamps
+- ✅ Pass/fail summary with recommendations
 
-**Requirements**:
-- .NET 6+ SDK
-- Windows OS (Windows Forms support)
-- SqlTestDataGenerator.UI project
+### 2. **build-and-run-ui.ps1** - UI Development & Testing
+**Purpose:** Build and launch the Windows Forms UI application
+
+**Usage:**
+```powershell
+# Build and run UI with default settings
+.\build-and-run-ui.ps1
+
+# Build and run with specific database connection
+.\build-and-run-ui.ps1 -TestMode
+```
+
+**Features:**
+- ✅ Automatic project building
+- ✅ UI application launch
+- ✅ Error handling and diagnostics
+- ✅ Development mode support
+
+### 3. **create-single-file-deploy.ps1** - Production Deployment
+**Purpose:** Create single-file deployment package for production
+
+**Usage:**
+```powershell
+# Create deployment package
+.\create-single-file-deploy.ps1
+
+# Clean previous builds and create fresh deployment
+.\create-single-file-deploy.ps1 -Clean
+```
+
+**Features:**
+- ✅ Single-file executable generation
+- ✅ All dependencies included
+- ✅ Production-ready optimization
+- ✅ Deployment package creation
 
 ---
 
-### 2. 🧪 run-tc001-test.ps1
-**Purpose**: Run specific test method `TC001_15_ExecuteQueryWithTestDataAsync_ComplexVowisSQL_WithGeminiAI`
+## 📁 Archive Folder
 
-**Usage**:
+All legacy and specialized testing scripts have been moved to the `archive/` subdirectory for reference and backward compatibility.
+
+### Archived Scripts Include:
+- **Testing Scripts:** Various test automation scripts for specific features
+- **Integration Scripts:** Database connection and integration testing
+- **Debug Scripts:** Troubleshooting and diagnostic utilities  
+- **Workflow Scripts:** Specialized workflow testing scenarios
+- **Legacy Deploy Scripts:** Previous deployment automation
+
+### Accessing Archived Scripts:
 ```powershell
-# Basic test run
-.\scripts\run-tc001-test.ps1
+# Navigate to archive
+cd archive
 
-# Verbose output
-.\scripts\run-tc001-test.ps1 -Verbose
+# List all archived scripts
+ls *.ps1
 
-# Debug mode
-.\scripts\run-tc001-test.ps1 -Debug
-
-# Release configuration
-.\scripts\run-tc001-test.ps1 -Configuration Release
+# Run an archived script
+.\archive\test-oracle-connection.ps1
 ```
-
-**Test Information**:
-- **Test Class**: ExecuteQueryWithTestDataAsyncDemoTests
-- **Test Method**: TC001_15_ExecuteQueryWithTestDataAsync_ComplexVowisSQL_WithGeminiAI  
-- **Categories**: AI-MySQL-Real, Integration
-- **Purpose**: Test AI-enhanced data generation với complex SQL query
-
-**Expected Behavior**:
-- ✅ WITH Gemini API + MySQL: Generate 15 meaningful records
-- ⚠️ WITHOUT API key: Fallback to constraint-based generation
-- ❌ WITHOUT MySQL: Fail with connection error (expected)
-- 🎯 Validates: AI-enhanced data generation for complex SQL scenarios
-
-**Features**:
-- ✅ Automatic test project build
-- ✅ Detailed test execution reporting
-- ✅ Performance timing
-- ✅ Common failure guidance
-- ✅ Log location information
-
-**Requirements**:
-- .NET 6+ SDK
-- MSTest framework
-- SqlTestDataGenerator.Tests project
-- Optional: MySQL connection, Gemini API Key
 
 ---
 
-### 3. 🔧 integration_test.ps1
-**Purpose**: Integration testing script (moved from root)
+## 🚀 Quick Start Guide
 
-### 3. 🚀 quick-test.ps1
-**Purpose**: Fast execution of TC001 test method with minimal output
+### For Development:
+1. **Test the system:** `.\final-test.ps1`
+2. **Run the UI:** `.\build-and-run-ui.ps1`
+3. **Deploy for production:** `.\create-single-file-deploy.ps1`
 
-**Usage**:
+### For Testing Only:
 ```powershell
-# Quick test run
-.\scripts\quick-test.ps1
+# Test specific database
+.\final-test.ps1 -DatabaseType MySQL
+.\final-test.ps1 -DatabaseType Oracle
 
-# Minimal output
-.\scripts\quick-test.ps1 -Quiet
+# Generate detailed test report
+.\final-test.ps1 -Verbose -GenerateReport
 ```
 
-**Features**:
-- ✅ Fast test execution without verbose logging
-- ✅ Automatic build detection
-- ✅ Performance timing
-- ✅ Minimal output for CI/CD integration
+### For Production Deployment:
+```powershell
+# Create single-file deployment
+.\create-single-file-deploy.ps1
+```
 
 ---
 
-### 4. 🔧 integration_test.ps1
-**Purpose**: Integration testing script (moved from root)
+## 📋 Script Dependencies
 
-### 5. ✅ verify_tc001_fix.ps1  
-**Purpose**: Verification script for TC001 fixes (moved from root)
+**Prerequisites:**
+- .NET 6 SDK or later
+- PowerShell 5.1 or PowerShell Core
+- Visual Studio or Build Tools
+- Database connections (MySQL/Oracle) for integration tests
 
-## 🎯 Quick Start Guide
+**Required Environment:**
+- Windows 10/11 or Windows Server
+- Sufficient disk space for builds and deployments
+- Network access for AI API calls (if enabled)
 
-### Running the UI Application:
+---
+
+## 🛠️ Troubleshooting
+
+### Common Issues:
+
+**Build Failures:**
 ```powershell
-# Navigate to project root
-cd C:\Customize\04.GenData
-
-# Run UI application
-.\scripts\build-and-run-ui.ps1
+# Clean and rebuild
+dotnet clean
+dotnet restore
+.\build-and-run-ui.ps1
 ```
 
-### Running TC001 Test:
+**Test Failures:**
 ```powershell
-# Navigate to project root  
-cd C:\Customize\04.GenData
+# Check logs
+cat logs\final-test-*.log
 
-# Run specific test with verbose output
-.\scripts\run-tc001-test.ps1 -Verbose
+# Run database-specific tests
+.\final-test.ps1 -DatabaseType MySQL -Verbose
 ```
 
-## 📊 Output Examples
-
-### build-and-run-ui.ps1 Output:
-```
-===============================================
-  SqlTestDataGenerator.UI Build & Run Script
-===============================================
-
-📋 Project Information:
-  • Project: SqlTestDataGenerator.UI
-  • Framework: net6.0-windows
-  • Configuration: Debug
-  • Clean Build: No
-
-🔍 Checking prerequisites...
-✅ .NET SDK found: 6.0.XXX
-✅ Project file found: SqlTestDataGenerator.UI\SqlTestDataGenerator.UI.csproj
-✅ App settings found: SqlTestDataGenerator.UI\appsettings.json
-
-🔨 Building SqlTestDataGenerator.UI (Debug)...
-✅ Build completed successfully!
-
-🚀 Starting SqlTestDataGenerator.UI...
-📍 Press Ctrl+C to stop the application
+**Deployment Issues:**
+```powershell
+# Clean previous builds
+.\create-single-file-deploy.ps1 -Clean
 ```
 
-### run-tc001-test.ps1 Output:
-```
-===============================================
-  TC001 Complex Vowis SQL Test Runner
-===============================================
+### Getting Help:
+- Check script output for detailed error messages
+- Review generated log files in `logs/` directory
+- Consult archived scripts for specific use cases
+- Review test reports in `reports/` directory
 
-📋 Test Information:
-  • Test Class: ExecuteQueryWithTestDataAsyncDemoTests
-  • Test Method: TC001_15_ExecuteQueryWithTestDataAsync_ComplexVowisSQL_WithGeminiAI
-  • Categories: AI-MySQL-Real, Integration
+---
 
-🔍 Checking prerequisites...
-✅ .NET SDK found: 6.0.XXX
-✅ Test project found: SqlTestDataGenerator.Tests\SqlTestDataGenerator.Tests.csproj
-✅ Test class found: SqlTestDataGenerator.Tests\ExecuteQueryWithTestDataAsyncDemoTests.cs
-✅ Gemini API Key configuration detected
+## 📝 Notes
 
-📁 Log Locations:
-  • Test Results: SqlTestDataGenerator.Tests\TestResults\
-  • Application Logs: logs\
-  • Test Logs: SqlTestDataGenerator.Tests\logs\
+- **Script Organization:** The 3 main scripts cover all essential operations
+- **Archive Access:** Legacy scripts remain available in `archive/` folder
+- **Logging:** All main scripts generate detailed logs
+- **Reports:** Test results are automatically documented
+- **Modularity:** Each script is self-contained and can run independently
 
-🔨 Building test project...
-✅ Test project build completed successfully!
-
-🧪 Running TC001_15_ExecuteQueryWithTestDataAsync_ComplexVowisSQL_WithGeminiAI...
-
-🎯 Target Test Method: SqlTestDataGenerator.Tests.ExecuteQueryWithTestDataAsyncDemoTests.TC001_15_ExecuteQueryWithTestDataAsync_ComplexVowisSQL_WithGeminiAI
-📋 Test Categories: AI-MySQL-Real, Integration
-🔧 Configuration: Debug
-
-📝 Expected Test Behavior:
-  • WITH Gemini API + MySQL: Generate 15 meaningful records
-  • WITHOUT API key: Fallback to constraint-based generation
-  • WITHOUT MySQL: Fail with connection error
-  • Validates: AI-enhanced data generation for complex SQL
-```
-
-## 🚨 Common Issues & Solutions
-
-### build-and-run-ui.ps1 Issues:
-
-❌ **".NET SDK not found"**
-- **Solution**: Install .NET 6+ SDK from https://dotnet.microsoft.com/download
-
-❌ **"Project file not found"** 
-- **Solution**: Run script from project root directory (where .sln file exists)
-
-❌ **"Build failed"**
-- **Solution**: Check dependencies, ensure all NuGet packages are restored
-
-### run-tc001-test.ps1 Issues:
-
-❌ **"Test failed with MySQL connection error"**
-- **Solution**: Expected behavior without real MySQL connection
-
-⚠️ **"Gemini API quota exceeded"**
-- **Solution**: Expected behavior, indicates engine worked successfully  
-
-⚠️ **"API key not found"**
-- **Solution**: Test will fallback to constraint-based generation
-
-## 📁 File Organization
-
-After running scripts, files are organized as follows:
-
-```
-04.GenData/
-├── scripts/           # All PowerShell scripts
-│   ├── build-and-run-ui.ps1
-│   ├── run-tc001-test.ps1  
-│   ├── integration_test.ps1
-│   ├── verify_tc001_fix.ps1
-│   └── README.md
-├── sql/              # SQL files and schemas
-├── docs/             # Documentation and summaries  
-├── reports/          # Test results and analysis
-└── logs/             # Application logs
-```
-
-## 🔐 Security Notes
-
-- Scripts validate prerequisites before execution
-- No hardcoded credentials or sensitive data
-- API keys read from configuration files only
-- Error handling prevents sensitive information exposure
-
-## 🔄 Maintenance
-
-Scripts are self-documenting and include:
-- Parameter validation
-- Prerequisite checking  
-- Detailed error messages
-- Usage examples
-- Colored output for clarity
-
-For issues or improvements, check the script headers for detailed documentation. 
+For detailed technical documentation, see the project's main documentation files. 

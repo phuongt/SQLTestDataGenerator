@@ -60,7 +60,7 @@ public class ExecuteQueryWithTestDataAsyncDemoTests
     [TestInitialize]
     public void Setup()
     {
-        _engineService = new EngineService();
+        _engineService = new EngineService(DatabaseType.MySQL, DATABASE_CONNECTION_STRING);
     }
 
     /// <summary>
@@ -672,7 +672,7 @@ public class ExecuteQueryWithTestDataAsyncDemoTests
         Console.WriteLine($"Gemini API Key Available: {!string.IsNullOrEmpty(geminiApiKey)}");
         
         // 🎯 FIX: Create EngineService with Gemini API key để enable AI
-        var aiEngineService = new EngineService(geminiApiKey);
+        var aiEngineService = new EngineService(DatabaseType.MySQL, DATABASE_CONNECTION_STRING, geminiApiKey);
         
         var request = new QueryExecutionRequest
         {

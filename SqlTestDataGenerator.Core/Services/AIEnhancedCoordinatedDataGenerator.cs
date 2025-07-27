@@ -15,18 +15,21 @@ public class AIEnhancedCoordinatedDataGenerator
     private readonly ConstraintExtractorService _constraintExtractor;
     private readonly IAIDataGenerationService _aiService;
     private readonly SqlMetadataService _metadataService;
+    private readonly CommonInsertBuilder _insertBuilder;
 
     public AIEnhancedCoordinatedDataGenerator(
         CoordinatedDataGenerator coordinatedGenerator,
         ConstraintExtractorService constraintExtractor,
         IAIDataGenerationService aiService,
-        SqlMetadataService metadataService)
+        SqlMetadataService metadataService,
+        CommonInsertBuilder insertBuilder)
     {
         _logger = Log.Logger.ForContext<AIEnhancedCoordinatedDataGenerator>();
         _coordinatedGenerator = coordinatedGenerator;
         _constraintExtractor = constraintExtractor;
         _aiService = aiService;
         _metadataService = metadataService;
+        _insertBuilder = insertBuilder;
     }
 
     /// <summary>
@@ -107,7 +110,7 @@ public class AIEnhancedCoordinatedDataGenerator
                 tableName, tableSchema, tableConstraints, desiredRecordCount, sqlQuery, databaseInfo);
             
             // Convert to INSERT statements
-            var tableInserts = ConvertToInsertStatements(tableName, tableSchema, tableRecords);
+            var tableInserts = ConvertToInsertStatements(tableName, tableSchema, tableRecords, (DatabaseType)Enum.Parse(typeof(DatabaseType), databaseType));
             insertStatements.AddRange(tableInserts);
         }
         
@@ -290,16 +293,20 @@ public class AIEnhancedCoordinatedDataGenerator
     private List<InsertStatement> ConvertToInsertStatements(
         string tableName,
         TableSchema tableSchema,
-        List<Dictionary<string, object>> records)
+        List<Dictionary<string, object>> records,
+        DatabaseType databaseType = DatabaseType.Oracle)
     {
         var insertStatements = new List<InsertStatement>();
         
         foreach (var record in records)
         {
+            // 🔧 CRITICAL FIX: Use CommonInsertBuilder with proper Oracle support
+            var insertSql = _insertBuilder.BuildInsertStatement(tableName, record, tableSchema, databaseType);
+            
             var insertStatement = new InsertStatement
             {
                 TableName = tableName,
-                SqlStatement = BuildInsertSql(tableName, record),
+                SqlStatement = insertSql,
                 Priority = 0
             };
             
@@ -358,42 +365,6 @@ public class AIEnhancedCoordinatedDataGenerator
         }
         
         return hints.Distinct().ToList();
-    }
-
-    /// <summary>
-    /// Build INSERT SQL statement from record data
-    /// </summary>
-    private string BuildInsertSql(string tableName, Dictionary<string, object> record)
-    {
-        var columns = string.Join(", ", record.Keys);
-        var values = string.Join(", ", record.Values.Select(v => FormatValue(v)));
-        
-        return $"INSERT INTO {tableName} ({columns}) VALUES ({values});";
-    }
-
-    /// <summary>
-    /// Format value for SQL statement
-    /// </summary>
-    private string FormatValue(object value)
-    {
-        if (value == null) return "NULL";
-        
-        if (value is string stringValue)
-        {
-            return $"'{stringValue.Replace("'", "''")}'";
-        }
-        
-        if (value is DateTime dateValue)
-        {
-            return $"'{dateValue:yyyy-MM-dd HH:mm:ss}'";
-        }
-        
-        if (value is bool boolValue)
-        {
-            return boolValue ? "1" : "0";
-        }
-        
-        return value.ToString() ?? "NULL";
     }
 
     /// <summary>

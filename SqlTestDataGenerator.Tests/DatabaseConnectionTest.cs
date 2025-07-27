@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SqlTestDataGenerator.Core.Services;
+using SqlTestDataGenerator.Core.Models;
 using System.Threading.Tasks;
 
 namespace SqlTestDataGenerator.Tests;
@@ -12,7 +13,7 @@ public class DatabaseConnectionTest
     [TestInitialize]
     public void Setup()
     {
-        _engineService = new EngineService();
+        _engineService = new EngineService(DatabaseType.MySQL, "Server=localhost;Port=3306;Database=test;Uid=root;Pwd=;CharSet=utf8mb4;");
     }
 
     [TestMethod]

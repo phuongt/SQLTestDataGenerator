@@ -27,6 +27,23 @@ public class AppSettings
     /// Data generation settings
     /// </summary>
     public DataGenerationSettings DataGeneration { get; set; } = new();
+
+    /// <summary>
+    /// Default connection string for MySQL integration tests and UI.
+    /// </summary>
+    public string DefaultMySqlConnectionString { get; set; } = "Server=localhost;Port=3306;Database=my_database;Uid=root;Pwd=22092012;Connect Timeout=120;Command Timeout=120;CharSet=utf8mb4;Connection Lifetime=300;Pooling=true;Min Pool Size=0;Max Pool Size=10;";
+    /// <summary>
+    /// Default connection string for SQL Server integration tests and UI.
+    /// </summary>
+    public string DefaultSqlServerConnectionString { get; set; } = "Server=localhost;Database=my_database;User Id=sa;Password=your_password;TrustServerCertificate=True;";
+    /// <summary>
+    /// Default connection string for PostgreSQL integration tests and UI.
+    /// </summary>
+    public string DefaultPostgreSqlConnectionString { get; set; } = "Host=localhost;Port=5432;Database=my_database;Username=postgres;Password=password;";
+    /// <summary>
+    /// Default connection string for Oracle integration tests and UI.
+    /// </summary>
+    public string DefaultOracleConnectionString { get; set; } = "Data Source=localhost:1521/XE;User Id=system;Password=22092012;Connection Timeout=120;Connection Lifetime=300;Pooling=true;Min Pool Size=0;Max Pool Size=10;";
 }
 
 /// <summary>

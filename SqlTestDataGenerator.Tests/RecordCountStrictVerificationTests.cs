@@ -18,7 +18,7 @@ public class RecordCountStrictVerificationTests
     [TestInitialize]
     public void Setup()
     {
-        _engineService = new EngineService();
+        _engineService = new EngineService(DatabaseType.MySQL, MYSQL_CONNECTION_STRING);
     }
 
     [TestMethod]
